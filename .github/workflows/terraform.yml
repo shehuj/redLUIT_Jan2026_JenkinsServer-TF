@@ -247,7 +247,7 @@ jobs:
         working_directory: terraform
         soft_fail: false  # Fail workflow on security issues
         format: sarif
-        sarif_file: tfsec-results.sarif
+        sarif_file: ../tfsec-results.sarif
         additional_args: --minimum-severity MEDIUM
 
     # Upload tfsec results to GitHub Security tab
@@ -265,7 +265,7 @@ jobs:
         directory: terraform
         framework: terraform
         output_format: sarif
-        output_file_path: ./checkov-results.sarif
+        output_file_path: checkov-results.sarif
         soft_fail: true  # Don't fail on checkov issues, just report
         quiet: false
         download_external_modules: true
@@ -275,7 +275,7 @@ jobs:
       if: always()
       uses: github/codeql-action/upload-sarif@v4
       with:
-        sarif_file: ./checkov-results.sarif
+        sarif_file: checkov-results.sarif
         category: checkov
 
     # Generate security summary
