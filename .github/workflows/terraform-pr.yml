@@ -54,7 +54,7 @@ jobs:
       run: terraform fmt -check -recursive
       continue-on-error: false
 
-    - name: Terraform Init
+    - name: Terraform Init -lock=false
       id: init
       run: terraform init
 
@@ -65,7 +65,7 @@ jobs:
     - name: Terraform Plan
       id: plan
       run: |
-        terraform plan -out=tfplan 2>&1 | tee plan.txt
+        terraform plan -lock=false -out=tfplan 2>&1 | tee plan.txt
         echo "exitcode=$?" >> $GITHUB_OUTPUT
       continue-on-error: true
 
