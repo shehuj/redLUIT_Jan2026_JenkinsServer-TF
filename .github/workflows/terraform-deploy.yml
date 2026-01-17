@@ -42,11 +42,11 @@ permissions:
   pull-requests: write
 
 env:
-    TF_LOG: WARN
-    TF_IN_AUTOMATION: true
-    AWS_REGION: ${{ secrets.AWS_REGION }}
-    AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-    AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  TF_LOG: WARN
+  TF_IN_AUTOMATION: true
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 jobs:
   plan:
     name: 'Plan Deployment'
@@ -62,13 +62,6 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
 
     - name: Create terraform.tfvars
       run: |
@@ -163,13 +156,6 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
 
     - name: Create terraform.tfvars
       run: |

@@ -26,11 +26,11 @@ permissions:
   security-events: write
 
 env:
-    TF_LOG: WARN
-    TF_IN_AUTOMATION: true
-    AWS_REGION: ${ { secrets.AWS_REGION } }
-    AWS_ACCESS_KEY_ID: ${ { secrets.AWS_ACCESS_KEY_ID } }
-    AWS_SECRET_ACCESS_KEY: ${ { secrets.AWS_SECRET_ACCESS_KEY } }
+  TF_LOG: WARN
+  TF_IN_AUTOMATION: true
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
 jobs:
   validate:
