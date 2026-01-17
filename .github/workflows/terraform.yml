@@ -118,13 +118,51 @@ jobs:
     # Create terraform.tfvars from GitHub secrets
     - name: Create terraform.tfvars
       run: |
+        # Validate required secrets
+        if [ -z "${{ secrets.PUBLIC_IP }}" ] || [ -z "${{ secrets.JENKINS_S3_BUCKET_NAME }}" ]; then
+          echo "::error::Required secrets are missing!"
+          echo "::error::Please set the following in GitHub Secrets:"
+          echo "::error::  - PUBLIC_IP (your IP in CIDR format, e.g., 203.0.113.42/32)"
+          echo "::error::  - JENKINS_S3_BUCKET_NAME (unique S3 bucket name)"
+          echo "::error::Optional secrets with defaults:"
+          echo "::error::  - AWS_REGION (default: us-east-1)"
+          echo "::error::  - ENVIRONMENT (default: dev)"
+          echo "::error::  - JENKINS_UI_CIDRS (default: [\"0.0.0.0/0\"] - NOT SECURE)"
+          exit 1
+        fi
+
+        # Set defaults for optional secrets
+        if [ -z "${{ secrets.AWS_REGION }}" ]; then
+          AWS_REGION="us-east-1"
+        else
+          AWS_REGION="${{ secrets.AWS_REGION }}"
+        fi
+
+        if [ -z "${{ secrets.ENVIRONMENT }}" ]; then
+          ENVIRONMENT="dev"
+        else
+          ENVIRONMENT="${{ secrets.ENVIRONMENT }}"
+        fi
+
+        if [ -z "${{ secrets.JENKINS_UI_CIDRS }}" ]; then
+          JENKINS_UI_CIDRS='["0.0.0.0/0"]'
+        else
+          JENKINS_UI_CIDRS='${{ secrets.JENKINS_UI_CIDRS }}'
+        fi
+
+        # Create terraform.tfvars
         cat > terraform.tfvars <<EOF
-        aws_region             = "${{ secrets.AWS_REGION }}"
+        aws_region             = "${AWS_REGION}"
         public_ip              = "${{ secrets.PUBLIC_IP }}"
         jenkins_s3_bucket_name = "${{ secrets.JENKINS_S3_BUCKET_NAME }}"
-        environment            = "${{ secrets.ENVIRONMENT }}"
-        jenkins_ui_cidrs       = ${{ secrets.JENKINS_UI_CIDRS }}
+        environment            = "${ENVIRONMENT}"
+        jenkins_ui_cidrs       = ${JENKINS_UI_CIDRS}
         EOF
+
+        echo "::notice::Created terraform.tfvars with environment: ${ENVIRONMENT}"
+        if [ "${JENKINS_UI_CIDRS}" = '["0.0.0.0/0"]' ]; then
+          echo "::warning::jenkins_ui_cidrs is set to 0.0.0.0/0 (open to internet). This is NOT SECURE for production!"
+        fi
 
     # Install the latest version of Terraform CLI
     - name: Setup Terraform
@@ -198,11 +236,6 @@ jobs:
       security-events: write  # Required for uploading SARIF results
       pull-requests: write
 
-    defaults:
-      run:
-        shell: bash
-        working-directory: ./terraform
-
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -214,14 +247,15 @@ jobs:
         working_directory: terraform
         soft_fail: false  # Fail workflow on security issues
         format: sarif
+        sarif_file: tfsec-results.sarif
         additional_args: --minimum-severity MEDIUM
 
     # Upload tfsec results to GitHub Security tab
     - name: Upload tfsec SARIF
       if: always()
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       with:
-        sarif_file: results.sarif
+        sarif_file: tfsec-results.sarif
         category: tfsec
 
     # Run Checkov for compliance scanning
@@ -231,7 +265,7 @@ jobs:
         directory: terraform
         framework: terraform
         output_format: sarif
-        output_file_path: checkov-results.sarif
+        output_file_path: ./checkov-results.sarif
         soft_fail: true  # Don't fail on checkov issues, just report
         quiet: false
         download_external_modules: true
@@ -239,9 +273,9 @@ jobs:
     # Upload Checkov results to GitHub Security tab
     - name: Upload Checkov SARIF
       if: always()
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       with:
-        sarif_file: checkov-results.sarif
+        sarif_file: ./checkov-results.sarif
         category: checkov
 
     # Generate security summary
