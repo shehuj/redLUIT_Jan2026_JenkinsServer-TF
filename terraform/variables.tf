@@ -23,6 +23,7 @@ variable "jenkins_instance_type" {
 variable "jenkins_s3_bucket_name" {
   description = "Unique name for Jenkins artifacts bucket"
   type        = string
+  default     = "jenkins-artifacts"
 }
 
 variable "environment" {
