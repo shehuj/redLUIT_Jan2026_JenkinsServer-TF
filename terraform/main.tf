@@ -25,8 +25,8 @@ module "iam" {
   source    = "./modules/iam_role"
   role_name = "jenkins-s3-role"
   s3_resources = [
-    module.artifact_bucket.name,
-    "${module.artifact_bucket.name}/*"
+    module.artifact_bucket.arn,
+    "${module.artifact_bucket.arn}/*"
   ]
 }
 
