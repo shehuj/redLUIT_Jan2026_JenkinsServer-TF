@@ -1,8 +1,13 @@
-# AWS Provider Configuration
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+  required_version = ">= 1.5.0"
+}
+
 provider "aws" {
   region = var.aws_region
-
-  # Note: Tags are managed centrally via locals.all_tags and applied to each resource
-  # This approach provides better control and consistency than default_tags
-  # See locals.tf for tag definitions
 }

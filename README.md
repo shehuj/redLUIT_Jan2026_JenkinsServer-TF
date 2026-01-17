@@ -4,6 +4,36 @@ Deploy a production-ready Jenkins CI/CD server on AWS with automated workflows, 
 
 ## 🚀 Quick Start
 
+terraform/
+├── modules/
+│   ├── vpc/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   ├── security_group/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   ├── ec2_jenkins/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   ├── outputs.tf
+│   │   └── scripts/
+│   │       └── jenkins_install.sh
+│   ├── s3_bucket/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   └── iam_role/
+│       ├── main.tf
+│       ├── variables.tf
+│       └── outputs.tf
+├── providers.tf
+├── backend.tf
+├── variables.tf
+├── main.tf
+└── outputs.tf
+
 **New to this project?** → See **[QUICK-START.md](QUICK-START.md)**
 
 **Setting up CI/CD?** → See **[WORKFLOWS.md](WORKFLOWS.md)**
