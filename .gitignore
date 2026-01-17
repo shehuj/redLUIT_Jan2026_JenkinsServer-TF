@@ -35,3 +35,7 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
+
+# Ignore backend configuration (may contain sensitive bucket names)
+# Keep backend.tf.example in version control as a template
+# terraform/backend.tf
