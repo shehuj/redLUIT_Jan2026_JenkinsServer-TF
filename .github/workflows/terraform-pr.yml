@@ -25,11 +25,6 @@ jobs:
     name: 'Validate & Plan'
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        shell: bash
-        working-directory: ./terraform
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,18 +34,22 @@ jobs:
 
       - name: Terraform Format Check
         id: fmt
+        working-directory: ./terraform
         run: terraform fmt -recursive
 
       - name: Terraform Init
         id: init
+        working-directory: ./terraform
         run: terraform init
 
       - name: Terraform Validate
         id: validate
+        working-directory: ./terraform
         run: terraform validate
 
       - name: Terraform Plan
         id: plan
+        working-directory: ./terraform
         run: |
           terraform plan -lock=false -out=tfplan 2>&1 | tee plan.txt
           echo "exitcode=$?" >> $GITHUB_OUTPUT
@@ -58,8 +57,8 @@ jobs:
 
       - name: Generate Plan Summary
         id: summary
+        working-directory: ./terraform
         run: |
-          # safe counts without quotes so GitHub Actions parses correctly
           ADDS=$(grep -c "will be created" plan.txt || echo 0)
           CHANGES=$(grep -c "will be updated" plan.txt || echo 0)
           DESTROYS=$(grep -c "will be destroyed" plan.txt || echo 0)
@@ -182,12 +181,12 @@ ${planTxt.length > 60000 ? planTxt.substring(0, 60000) + '\n\n... (plan truncate
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init for Cost
-        run: terraform init
         working-directory: ./terraform
+        run: terraform init
 
       - name: Terraform Plan for Cost
-        run: terraform plan -lock=false -out=tfplan
         working-directory: ./terraform
+        run: terraform plan -lock=false -out=tfplan
 
       - name: Cost Comment
         uses: actions/github-script@v7
