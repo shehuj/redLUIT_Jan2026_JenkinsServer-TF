@@ -17,4 +17,5 @@ variable "allowed_ssh_cidr" {
 variable "artifact_bucket_name" {
   description = "Name for S3 bucket for Jenkins artifacts"
   type        = string
+  default     = "jenkins-artifact-bucket"
 }
