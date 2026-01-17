@@ -53,17 +53,18 @@ jobs:
         id: plan
         working-directory: ./terraform
         run: |
+          set -o pipefail
           terraform plan -lock=false -out=tfplan 2>&1 | tee plan.txt
-          echo "exitcode=$?" >> $GITHUB_OUTPUT
+          echo "exitcode=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       - name: Generate Plan Summary
         id: summary
         working-directory: ./terraform
         run: |
-          ADDS=$(grep -c "will be created" plan.txt || echo 0)
-          CHANGES=$(grep -c "will be updated" plan.txt || echo 0)
-          DESTROYS=$(grep -c "will be destroyed" plan.txt || echo 0)
+          ADDS=$(grep -c "will be created" plan.txt || echo "0")
+          CHANGES=$(grep -c "will be updated" plan.txt || echo "0")
+          DESTROYS=$(grep -c "will be destroyed" plan.txt || echo "0")
 
           echo "adds=${ADDS}" >> $GITHUB_OUTPUT
           echo "changes=${CHANGES}" >> $GITHUB_OUTPUT
