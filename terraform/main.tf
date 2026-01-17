@@ -1,7 +1,7 @@
 module "vpc" {
-  source     = "./modules/vpc"
-  name       = "jenkins-vpc"
-  cidr_block = "10.0.0.0/16"
+  source         = "./modules/vpc"
+  name           = "jenkins-vpc"
+  cidr_block     = "10.0.0.0/16"
   public_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
 }
 
@@ -32,9 +32,9 @@ module "iam" {
 
 module "jenkins" {
   source           = "./modules/ec2_jenkins"
-  subnet_id        = module.vpc.public_subnet_ids[0]
+  subnet_id        = module.vpc.public_subnets_ids[0]
   instance_type    = var.instance_type
   key_name         = var.key_pair_name
-  security_groups  = [module.sg_jenkins.security_group_id]
+  security_groups  = [module.sg.id]
   instance_profile = module.iam.instance_profile
 }

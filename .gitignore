@@ -43,6 +43,7 @@ terraform.rc
 # Ignore plan files (may contain sensitive data)
 *.tfplan
 *.tfplan.*
+plan.txt
 
 # Ignore lock files for local development
 .terraform.lock.hcl.backup
