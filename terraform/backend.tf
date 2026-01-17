@@ -50,7 +50,7 @@
 terraform {
   backend "s3" {
     # S3 bucket name for storing Terraform state
-    bucket = "ec2-shutdown-lambda-bucket"
+    bucket = "terraform-state-615299732970-us-east-1"
 
     # Path within the bucket where state file will be stored
     key = "jenkins/prod/terraform.tfstate"
@@ -59,7 +59,7 @@ terraform {
     region = "us-east-1"
 
     # DynamoDB table name for state locking
-    dynamodb_table = "dyning_table"
+    dynamodb_table = "terraform-state-lock"
 
     # Enable encryption at rest for state file
     encrypt = true
