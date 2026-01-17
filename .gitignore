@@ -39,3 +39,10 @@ terraform.rc
 # Ignore backend configuration (may contain sensitive bucket names)
 # Keep backend.tf.example in version control as a template
 # terraform/backend.tf
+
+# Ignore plan files (may contain sensitive data)
+*.tfplan
+*.tfplan.*
+
+# Ignore lock files for local development
+.terraform.lock.hcl.backup

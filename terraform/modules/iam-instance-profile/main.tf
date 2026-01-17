@@ -27,7 +27,16 @@ resource "aws_iam_policy" "this" {
     Statement = [
       {
         Effect = "Allow"
-        Action = ["s3:*"]
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+          "s3:GetBucketLocation",
+          "s3:GetBucketVersioning",
+          "s3:GetObjectVersion",
+          "s3:DeleteObjectVersion"
+        ]
         Resource = [
           var.s3_bucket_arn,
           "${var.s3_bucket_arn}/*"
