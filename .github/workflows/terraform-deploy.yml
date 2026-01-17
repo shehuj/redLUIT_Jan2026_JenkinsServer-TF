@@ -3,6 +3,13 @@ name: Terraform Deploy
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-deploy.yml'
+
+permissions:
+  contents: read
+  id-token: write
 
 env:
   TF_LOG: WARN
@@ -13,7 +20,9 @@ env:
 
 jobs:
   deploy:
+    name: 'Deploy Infrastructure'
     runs-on: ubuntu-latest
+    environment: production
 
     steps:
       - name: Checkout repository
@@ -29,14 +38,52 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      - name: Terraform Format Check
+        id: fmt
+        working-directory: ./terraform
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
       - name: Terraform Init
+        id: init
         working-directory: ./terraform
         run: terraform init
 
-      - name: Terraform Plan
+      - name: Terraform Validate
+        id: validate
         working-directory: ./terraform
-        run: terraform plan -out=tfplan
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ./terraform
+        run: |
+          terraform plan -out=tfplan 2>&1 | tee plan.txt
+          echo "exitcode=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ github.sha }}
+          path: terraform/tfplan
+          retention-days: 7
 
       - name: Terraform Apply
+        id: apply
         working-directory: ./terraform
         run: terraform apply -auto-approve tfplan
+
+      - name: Generate Deployment Summary
+        if: always()
+        run: |
+          echo "## Terraform Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Status" >> $GITHUB_STEP_SUMMARY
+          echo "- **Format Check:** \`${{ steps.fmt.outcome }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Init:** \`${{ steps.init.outcome }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Validate:** \`${{ steps.validate.outcome }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Plan:** \`${{ steps.plan.outcome }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Apply:** \`${{ steps.apply.outcome }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
