@@ -247,8 +247,22 @@ jobs:
         working_directory: terraform
         soft_fail: false  # Fail workflow on security issues
         format: sarif
-        sarif_file: ../tfsec-results.sarif
         additional_args: --minimum-severity MEDIUM
+
+    # Move tfsec results to root for upload
+    - name: Move tfsec SARIF
+      if: always()
+      run: |
+        if [ -f terraform/results.sarif ]; then
+          mv terraform/results.sarif tfsec-results.sarif
+          echo "Moved tfsec results to root"
+        elif [ -f results.sarif ]; then
+          mv results.sarif tfsec-results.sarif
+          echo "Found results in root, renamed"
+        else
+          echo "Warning: tfsec results.sarif not found"
+          ls -la terraform/ || true
+        fi
 
     # Upload tfsec results to GitHub Security tab
     - name: Upload tfsec SARIF
@@ -265,10 +279,22 @@ jobs:
         directory: terraform
         framework: terraform
         output_format: sarif
-        output_file_path: checkov-results.sarif
+        output_file_path: results.sarif
         soft_fail: true  # Don't fail on checkov issues, just report
         quiet: false
         download_external_modules: true
+
+    # Move Checkov results for upload
+    - name: Move Checkov SARIF
+      if: always()
+      run: |
+        if [ -f results.sarif ]; then
+          mv results.sarif checkov-results.sarif
+          echo "Moved Checkov results to checkov-results.sarif"
+        else
+          echo "Warning: Checkov results.sarif not found"
+          ls -la . || true
+        fi
 
     # Upload Checkov results to GitHub Security tab
     - name: Upload Checkov SARIF
