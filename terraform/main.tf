@@ -32,9 +32,9 @@ module "iam" {
 
 module "jenkins" {
   source           = "./modules/ec2_jenkins"
-  subnet_id        = module.vpc.public_subnets_ids[0]
-  instance_type    = "t2.micro"
+  subnet_id        = module.vpc.public_subnet_ids[0]
+  instance_type    = var.instance_type
   key_name         = var.key_pair_name
-  security_groups  = ["10.0.1.0/24"]
+  security_groups  = [module.sg_jenkins.security_group_id]
   instance_profile = module.iam.instance_profile
 }
