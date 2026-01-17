@@ -6,25 +6,33 @@ Deploy a production-ready Jenkins CI/CD server on AWS with automated workflows, 
 
 terraform/
 ├── modules/
-│   ├── vpc/
+│   ├── vpc/                        # VPC with public/private subnets, IGW, route tables
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   └── outputs.tf
-│   ├── security_group/
+│   ├── security_group/             # Security group management
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   └── outputs.tf
-│   ├── ec2_jenkins/
+│   ├── ec2_jenkins/                # Jenkins EC2 instance
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   ├── outputs.tf
 │   │   └── scripts/
 │   │       └── jenkins_install.sh
-│   ├── s3_bucket/
+│   ├── s3_bucket/                  # S3 bucket for artifacts
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   └── outputs.tf
-│   └── iam_role/
+│   ├── iam_role/                   # IAM roles and instance profiles
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   ├── kms/                        # KMS keys for encryption
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   └── nat_instance/               # NAT instance for private subnet internet access
 │       ├── main.tf
 │       ├── variables.tf
 │       └── outputs.tf
@@ -87,10 +95,13 @@ See **[WORKFLOWS.md](WORKFLOWS.md)** for detailed workflow documentation.
 ## Overview
 
 This Terraform project provisions a complete Jenkins infrastructure on AWS, including:
-- **Jenkins EC2 Instance** running on Ubuntu 20.04 LTS
+- **Custom VPC** with public and private subnets across multiple availability zones
+- **Jenkins EC2 Instance** running on Amazon Linux 2
+- **NAT Instance** for private subnet internet access (optional)
+- **Security Groups** for network access control (SSH, Jenkins UI)
 - **IAM Role & Instance Profile** for secure S3 access
-- **Security Group** with SSH and web UI access controls
-- **S3 Bucket** for Jenkins artifacts storage
+- **S3 Bucket** for Jenkins artifacts storage with encryption
+- **KMS Keys** for EBS encryption
 - **Automated Installation** via user data script
 
 The infrastructure is organized using a modular architecture for reusability and maintainability.
@@ -98,29 +109,40 @@ The infrastructure is organized using a modular architecture for reusability and
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│           AWS Cloud (us-east-1)             │
-│                                             │
-│  ┌──────────────────────────────────────┐  │
-│  │      Default VPC                     │  │
-│  │                                      │  │
-│  │  ┌────────────────────────────────┐ │  │
-│  │  │  Jenkins EC2 Instance          │ │  │
-│  │  │  - Ubuntu 20.04 LTS            │ │  │
-│  │  │  - Jenkins (auto-installed)    │ │  │
-│  │  │  - IAM Instance Profile        │ │  │
-│  │  │  - Security Group (SSH, 8080)  │ │  │
-│  │  └────────────────────────────────┘ │  │
-│  │             │                        │  │
-│  └─────────────┼────────────────────────┘  │
-│                │                            │
-│                ▼                            │
-│  ┌────────────────────────────────────┐    │
-│  │  S3 Bucket (Jenkins Artifacts)     │    │
-│  │  - Private ACL                     │    │
-│  │  - IAM Policy Attached             │    │
-│  └────────────────────────────────────┘    │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                       AWS Cloud (us-east-1)                          │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────────┐ │
+│  │                    Custom VPC (10.0.0.0/16)                    │ │
+│  │                                                                │ │
+│  │  ┌──────────────────┐         ┌──────────────────┐            │ │
+│  │  │  Public Subnet   │         │  Public Subnet   │            │ │
+│  │  │  10.0.1.0/24     │         │  10.0.2.0/24     │            │ │
+│  │  │                  │         │                  │            │ │
+│  │  │  ┌────────────┐  │         │  ┌────────────┐  │            │ │
+│  │  │  │  Jenkins   │  │         │  │ NAT Instance│ │            │ │
+│  │  │  │  EC2       │  │         │  │ (Optional) │  │            │ │
+│  │  │  │  Instance  │  │         │  │            │  │            │ │
+│  │  │  └────────────┘  │         │  └────────────┘  │            │ │
+│  │  └──────────────────┘         └──────────────────┘            │ │
+│  │         │                              │                       │ │
+│  │         │      Internet Gateway        │                       │ │
+│  │         └──────────────┬───────────────┘                       │ │
+│  │                        │                                       │ │
+│  │  ┌──────────────────────────────────────┐                     │ │
+│  │  │         Private Subnets              │                     │ │
+│  │  │   (Optional - for future expansion)  │                     │ │
+│  │  └──────────────────────────────────────┘                     │ │
+│  └────────────────────────────────────────────────────────────────┘ │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────┐         │
+│  │  Supporting Resources                                  │         │
+│  │  - S3 Bucket (Jenkins Artifacts, Encrypted)            │         │
+│  │  - KMS Key (EBS Encryption)                            │         │
+│  │  - IAM Role & Instance Profile (S3 Access)             │         │
+│  │  - Security Groups (SSH, Jenkins Web UI)               │         │
+│  └────────────────────────────────────────────────────────┘         │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Module Structure
@@ -131,23 +153,38 @@ terraform/
 ├── variables.tf                     # Root-level input variables
 ├── outputs.tf                       # Root-level outputs
 ├── providers.tf                     # AWS provider configuration
-├── backend.tf.example               # Remote backend configuration template
-├── setup-backend.sh                 # Script to create S3 + DynamoDB backend
-├── terraform.tfvars.example         # Example variable values
-├── README.md                        # This file
+├── backend.tf                       # Remote backend configuration
 └── modules/
-    ├── jenkins/                     # Jenkins server module
-    │   ├── main.tf                  # EC2, Security Group, S3
-    │   ├── variables.tf             # Module inputs
-    │   ├── outputs.tf               # Module outputs
-    │   ├── data.tf                  # Data sources (AMI, VPC, subnets)
-    │   ├── user-data.sh             # Jenkins installation script
-    │   └── README.md                # Module documentation
-    └── iam-instance-profile/        # IAM module
-        ├── main.tf                  # IAM role, policy, instance profile
-        ├── variables.tf             # Module inputs
-        ├── outputs.tf               # Module outputs
-        └── README.md                # Module documentation
+    ├── vpc/                         # VPC infrastructure module
+    │   ├── main.tf                  # VPC, subnets, IGW, route tables
+    │   ├── variables.tf             # VPC configuration inputs
+    │   └── outputs.tf               # VPC IDs and subnet information
+    ├── security_group/              # Security group module
+    │   ├── main.tf                  # Security group rules
+    │   ├── variables.tf             # Ingress/egress rule inputs
+    │   └── outputs.tf               # Security group ID
+    ├── ec2_jenkins/                 # Jenkins EC2 instance module
+    │   ├── main.tf                  # EC2 instance configuration
+    │   ├── variables.tf             # Instance inputs
+    │   ├── outputs.tf               # Instance ID and public IP
+    │   └── scripts/
+    │       └── jenkins_install.sh   # Jenkins installation script
+    ├── s3_bucket/                   # S3 bucket module
+    │   ├── main.tf                  # S3 bucket with versioning, encryption
+    │   ├── variables.tf             # Bucket configuration inputs
+    │   └── outputs.tf               # Bucket name and ARN
+    ├── iam_role/                    # IAM role and policy module
+    │   ├── main.tf                  # IAM role, policy, instance profile
+    │   ├── variables.tf             # Role configuration inputs
+    │   └── outputs.tf               # Role ARN and instance profile
+    ├── kms/                         # KMS encryption key module
+    │   ├── main.tf                  # KMS key and alias
+    │   ├── variables.tf             # Key configuration inputs
+    │   └── outputs.tf               # Key ID and ARN
+    └── nat_instance/                # NAT instance module
+        ├── main.tf                  # NAT instance for private subnets
+        ├── variables.tf             # NAT configuration inputs
+        └── outputs.tf               # NAT instance network interface ID
 ```
 
 ## Prerequisites
@@ -160,7 +197,8 @@ Before deploying this infrastructure, ensure you have:
    - EC2 (create instances, security groups)
    - IAM (create roles, policies, instance profiles)
    - S3 (create buckets)
-   - VPC (read default VPC and subnets)
+   - VPC (create VPCs, subnets, internet gateways, route tables)
+   - KMS (create and manage encryption keys)
 4. **SSH Key Pair** created in AWS for instance access
 5. **Your Public IP** in CIDR format (find with `curl ifconfig.me`)
 
@@ -236,9 +274,10 @@ cp terraform.tfvars.example terraform.tfvars
 vim terraform.tfvars
 ```
 
-**Required variables:**
-- `public_ip` - Your public IP in CIDR format (e.g., `203.0.113.25/32`)
-- `jenkins_s3_bucket_name` - Globally unique S3 bucket name
+**Recommended variables to customize:**
+- `allowed_ssh_cidr` - Your public IP in CIDR format for SSH access (e.g., `203.0.113.25/32`)
+- `artifact_bucket_name` - Globally unique S3 bucket name
+- `key_pair_name` - Your AWS SSH key pair name for EC2 access
 
 ### 3. Initialize Terraform
 
@@ -273,8 +312,8 @@ After deployment completes:
 terraform output jenkins_public_ip
 # Access Jenkins at: http://<public_ip>:8080
 
-# SSH to the instance
-ssh -i ~/.ssh/your-key.pem ubuntu@<public_ip>
+# SSH to the instance (Amazon Linux 2 uses ec2-user)
+ssh -i ~/.ssh/your-key.pem ec2-user@<public_ip>
 
 # Retrieve initial admin password
 sudo cat /var/lib/jenkins/secrets/initialAdminPassword
@@ -285,12 +324,10 @@ sudo cat /var/lib/jenkins/secrets/initialAdminPassword
 | Variable | Description | Type | Default | Required |
 |----------|-------------|------|---------|----------|
 | `aws_region` | AWS region to deploy resources | `string` | `"us-east-1"` | No |
-| `public_ip` | Your public IP for SSH access (CIDR format) | `string` | - | Yes |
-| `jenkins_instance_type` | EC2 instance type for Jenkins | `string` | `"t2.micro"` | No |
-| `jenkins_s3_bucket_name` | Unique name for artifacts S3 bucket | `string` | - | Yes |
-| `environment` | Environment name (dev, staging, prod) | `string` | `"dev"` | No |
-| `jenkins_port` | Port for Jenkins web UI | `number` | `8080` | No |
-| `tags` | Additional tags for all resources | `map(string)` | `{}` | No |
+| `allowed_ssh_cidr` | CIDR block allowed for SSH access | `string` | `"0.0.0.0/0"` | No |
+| `instance_type` | EC2 instance type for Jenkins | `string` | `"t2.micro"` | No |
+| `artifact_bucket_name` | Unique name for artifacts S3 bucket | `string` | `"jenkins-artifact-bucket-redluit-2026"` | No |
+| `key_pair_name` | SSH key pair name for EC2 access | `string` | `"key"` | No |
 
 ## Outputs
 
@@ -308,7 +345,7 @@ sudo cat /var/lib/jenkins/secrets/initialAdminPassword
 - **SSH Access**: Restricted to `public_ip` variable (your IP only)
 - **Jenkins UI**: Open to `0.0.0.0/0` on port 8080
   - **Production Recommendation**: Restrict to office/VPN IP ranges
-  - Configure in `modules/jenkins/main.tf:18`
+  - Configure in `main.tf` security group module ingress rules
 - **Egress**: Allows all outbound traffic (required for package installation)
 
 ### IAM Security
@@ -344,16 +381,16 @@ sudo cat /var/lib/jenkins/secrets/initialAdminPassword
 
 ### SSH connection refused
 - **Issue**: `ssh: connect to host <ip> port 22: Connection refused`
-- **Solution**: Verify `public_ip` variable is your actual IP in CIDR format:
+- **Solution**: Verify `allowed_ssh_cidr` variable is your actual IP in CIDR format:
   ```bash
   curl ifconfig.me  # Get your IP
-  # Update terraform.tfvars with: public_ip = "<your-ip>/32"
+  # Update terraform.tfvars with: allowed_ssh_cidr = "<your-ip>/32"
   terraform apply
   ```
 
 ### S3 bucket name already exists
 - **Issue**: `BucketAlreadyExists: The requested bucket name is not available`
-- **Solution**: S3 bucket names are globally unique. Change `jenkins_s3_bucket_name` in `terraform.tfvars`
+- **Solution**: S3 bucket names are globally unique. Change `artifact_bucket_name` in `terraform.tfvars`
 
 ### Terraform validation errors
 - **Issue**: `terraform validate` shows errors
@@ -375,13 +412,13 @@ sudo cat /var/lib/jenkins/secrets/initialAdminPassword
 ### Change Instance Type
 Edit `terraform.tfvars`:
 ```hcl
-jenkins_instance_type = "t2.medium"  # 2 vCPU, 4 GB RAM
+instance_type = "t2.medium"  # 2 vCPU, 4 GB RAM
 ```
 
 ### Restrict Jenkins UI Access
-Edit `modules/jenkins/main.tf:18`:
+Edit `main.tf` security group module (port 8080 ingress rule):
 ```hcl
-cidr_blocks = ["203.0.113.0/24"]  # Your office network
+{ from = 8080, to = 8080, protocol = "tcp", cidr = ["203.0.113.0/24"] }  # Your office network
 ```
 
 ### Add Custom Tags
@@ -398,12 +435,6 @@ tags = {
 Edit `terraform.tfvars`:
 ```hcl
 aws_region = "us-west-2"
-```
-
-### Custom Jenkins Port
-Edit `terraform.tfvars`:
-```hcl
-jenkins_port = 9090
 ```
 
 ## Maintenance
@@ -435,23 +466,47 @@ terraform destroy
 
 ## Modules Documentation
 
-For detailed module documentation, see:
-- [IAM Instance Profile Module](./modules/iam-instance-profile/README.md)
-- [Jenkins Module](./modules/jenkins/README.md)
+This project uses a modular architecture with the following modules:
+- **vpc** - VPC infrastructure with public/private subnets
+- **security_group** - Security group management
+- **ec2_jenkins** - Jenkins EC2 instance with automated installation
+- **s3_bucket** - S3 bucket for artifacts storage
+- **iam_role** - IAM roles and instance profiles
+- **kms** - KMS keys for encryption
+- **nat_instance** - NAT instance for private subnet internet access
+
+Each module is self-contained with its own variables, outputs, and resources.
 
 ## Resources Created
 
 This Terraform configuration creates the following AWS resources:
 
-1. **EC2 Instance** - Jenkins server (Ubuntu 20.04)
-2. **Security Group** - Firewall rules for SSH and Jenkins UI
-3. **S3 Bucket** - Jenkins artifacts storage
-4. **IAM Role** - EC2 assume role policy
-5. **IAM Policy** - S3 access permissions
-6. **IAM Role Policy Attachment** - Links policy to role
-7. **IAM Instance Profile** - Attaches role to EC2 instance
+### VPC Module
+1. **VPC** - Custom VPC with DNS support
+2. **Internet Gateway** - For public subnet internet access
+3. **Public Subnets** - Two public subnets across availability zones
+4. **Private Subnets** - Optional private subnets for future expansion
+5. **Route Tables** - Public and private route tables
+6. **Route Table Associations** - Subnet to route table mappings
 
-**Total Resources**: ~7-8 resources
+### EC2 & Networking
+7. **Jenkins EC2 Instance** - Amazon Linux 2 with Jenkins auto-installed
+8. **Security Groups** - Firewall rules for SSH and Jenkins UI
+9. **NAT Instance** (Optional) - EC2 instance for NAT functionality
+10. **Elastic IP** (Optional) - For NAT instance
+
+### Storage & Encryption
+11. **S3 Bucket** - Jenkins artifacts storage with encryption
+12. **KMS Key** - For EBS and S3 encryption
+13. **KMS Alias** - User-friendly name for KMS key
+
+### IAM
+14. **IAM Role** - EC2 assume role policy
+15. **IAM Policy** - S3 access permissions
+16. **IAM Role Policy Attachment** - Links policy to role
+17. **IAM Instance Profile** - Attaches role to EC2 instance
+
+**Total Resources**: ~15-20+ resources depending on configuration
 
 ## Contributing
 

@@ -30,6 +30,39 @@ resource "aws_iam_role_policy_attachment" "attach" {
   policy_arn = aws_iam_policy.policy.arn
 }
 
+# Attach SSM managed policy
+resource "aws_iam_role_policy_attachment" "ssm" {
+  count      = var.enable_ssm ? 1 : 0
+  role       = aws_iam_role.role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+# KMS permissions for EBS encryption
+resource "aws_iam_policy" "kms" {
+  count = var.kms_key_arn != "" ? 1 : 0
+  name  = "${var.role_name}-kms-policy"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+        "kms:CreateGrant",
+        "kms:DescribeKey"
+      ]
+      Resource = var.kms_key_arn
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "kms" {
+  count      = var.kms_key_arn != "" ? 1 : 0
+  role       = aws_iam_role.role.name
+  policy_arn = aws_iam_policy.kms[0].arn
+}
+
 resource "aws_iam_instance_profile" "profile" {
   role = aws_iam_role.role.name
 }
