@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
     paths:
       - 'terraform/**'
+      - 'ansible/**'
       - '.github/workflows/terraform-deploy.yml'
 
 permissions:
@@ -73,17 +74,95 @@ jobs:
         working-directory: ./terraform
         run: terraform apply -auto-approve tfplan
 
+      # Extract Terraform outputs
+      - name: Get Jenkins IP Address
+        id: tf_outputs
+        working-directory: ./terraform
+        run: |
+          JENKINS_IP=$(terraform output -raw jenkins_public_ip)
+          echo "jenkins_ip=${JENKINS_IP}" >> $GITHUB_OUTPUT
+          echo "Jenkins IP Address: ${JENKINS_IP}"
+
+      # Wait for EC2 to be ready
+      - name: Wait for SSH to be available
+        run: |
+          echo "Waiting for SSH on ${{ steps.tf_outputs.outputs.jenkins_ip }}..."
+          for i in {1..60}; do
+            if nc -z ${{ steps.tf_outputs.outputs.jenkins_ip }} 22 2>/dev/null; then
+              echo "SSH is ready!"
+              exit 0
+            fi
+            echo "Attempt $i: SSH not ready, waiting 5 seconds..."
+            sleep 5
+          done
+          echo "ERROR: SSH did not become available"
+          exit 1
+
+      # Setup Ansible
+      - name: Install Ansible
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install ansible boto3 botocore
+
+      # Setup SSH key for Ansible
+      - name: Configure SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/jenkins_key.pem
+          chmod 600 ~/.ssh/jenkins_key.pem
+          ssh-keyscan -H ${{ steps.tf_outputs.outputs.jenkins_ip }} >> ~/.ssh/known_hosts
+
+      # Create Ansible inventory
+      - name: Create Ansible Inventory
+        working-directory: ./ansible
+        run: |
+          mkdir -p inventory
+          cat > inventory/jenkins_hosts.ini <<EOF
+          [jenkins]
+          ${{ steps.tf_outputs.outputs.jenkins_ip }} ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/jenkins_key.pem
+          EOF
+          cat inventory/jenkins_hosts.ini
+
+      # Run Ansible playbook
+      - name: Deploy Jenkins with Ansible
+        id: ansible
+        working-directory: ./ansible
+        run: |
+          ansible-playbook \
+            -i inventory/jenkins_hosts.ini \
+            playbooks/deploy_jenkins.yml \
+            -v
+
+      # Retrieve Jenkins password
+      - name: Get Jenkins Initial Password
+        id: jenkins_password
+        run: |
+          PASSWORD=$(ssh -i ~/.ssh/jenkins_key.pem -o StrictHostKeyChecking=no ec2-user@${{ steps.tf_outputs.outputs.jenkins_ip }} \
+            'sudo cat /var/lib/jenkins/secrets/initialAdminPassword' 2>/dev/null || echo "PASSWORD_RETRIEVAL_FAILED")
+          echo "password=${PASSWORD}" >> $GITHUB_OUTPUT
+
+      # Update deployment summary
       - name: Generate Deployment Summary
         if: always()
         run: |
-          echo "## Terraform Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Jenkins Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Status" >> $GITHUB_STEP_SUMMARY
-          echo "- **Format Check:** \`${{ steps.fmt.outcome }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Init:** \`${{ steps.init.outcome }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Validate:** \`${{ steps.validate.outcome }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Plan:** \`${{ steps.plan.outcome }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Apply:** \`${{ steps.apply.outcome }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "### Infrastructure Status" >> $GITHUB_STEP_SUMMARY
+          echo "- **Terraform Format:** \`${{ steps.fmt.outcome }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Terraform Init:** \`${{ steps.init.outcome }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Terraform Validate:** \`${{ steps.validate.outcome }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Terraform Plan:** \`${{ steps.plan.outcome }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Terraform Apply:** \`${{ steps.apply.outcome }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ansible Deployment:** \`${{ steps.ansible.outcome }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Jenkins Access Information" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Jenkins URL:** http://${{ steps.tf_outputs.outputs.jenkins_ip }}:8080" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Username:** \`admin\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Initial Admin Password:** \`${{ steps.jenkins_password.outputs.password }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY

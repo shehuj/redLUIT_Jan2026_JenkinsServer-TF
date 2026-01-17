@@ -1,7 +1,14 @@
 output "jenkins_url" {
-  value = "http://${module.jenkins.public_ip}:8080"
+  description = "Jenkins server URL"
+  value       = "http://${module.jenkins.public_ip}:8080"
+}
+
+output "jenkins_public_ip" {
+  description = "Public IP for SSH and Ansible access"
+  value       = module.jenkins.public_ip
 }
 
 output "artifact_bucket" {
-  value = module.artifact_bucket.name
+  description = "S3 bucket for Jenkins artifacts"
+  value       = module.artifact_bucket.name
 }

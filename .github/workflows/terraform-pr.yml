@@ -7,6 +7,7 @@ on:
       - dev
     paths:
       - 'terraform/**'
+      - 'ansible/**'
       - '.github/workflows/terraform-pr.yml'
       - '.github/workflows/terraform-deploy.yml'
 
