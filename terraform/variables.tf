@@ -19,3 +19,9 @@ variable "artifact_bucket_name" {
   type        = string
   default     = "jenkins-artifact-bucket"
 }
+
+variable "instance_type" {
+  description = "EC2 instance type for Jenkins server"
+  type        = string
+  default     = "t2.micro"
+}
