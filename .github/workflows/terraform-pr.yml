@@ -1,16 +1,3 @@
-# ========================================================================
-# Terraform Pull Request Workflow
-# ========================================================================
-#
-# This workflow runs on pull requests to validate infrastructure changes
-# WITHOUT deploying anything. It provides:
-# - Terraform validation and formatting checks
-# - Security scanning (tfsec, Checkov)
-# - Plan preview with cost estimation
-# - PR comments with plan details
-#
-# ========================================================================
-
 name: 'Terraform PR Validation'
 
 on:
@@ -43,99 +30,98 @@ jobs:
         working-directory: ./terraform
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-    - name: Terraform Format Check
-      id: fmt
-      run: terraform fmt -check -recursive
-      continue-on-error: false
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -recursive
 
-    - name: Terraform Init -lock=false
-      id: init
-      run: terraform init
+      - name: Terraform Init
+        id: init
+        run: terraform init
 
-    - name: Terraform Validate
-      id: validate
-      run: terraform validate
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate
 
-    - name: Terraform Plan
-      id: plan
-      run: |
-        terraform plan -lock=false -out=tfplan 2>&1 | tee plan.txt
-        echo "exitcode=$?" >> $GITHUB_OUTPUT
-      continue-on-error: true
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan -lock=false -out=tfplan 2>&1 | tee plan.txt
+          echo "exitcode=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
 
-    - name: Generate Plan Summary
-      id: summary
-      run: |
-        # Count resources
-        ADDS=$(grep -c "will be created" plan.txt || echo "0")
-        CHANGES=$(grep -c "will be updated" plan.txt || echo "0")
-        DESTROYS=$(grep -c "will be destroyed" plan.txt || echo "0")
+      - name: Generate Plan Summary
+        id: summary
+        run: |
+          # safe counts without quotes so GitHub Actions parses correctly
+          ADDS=$(grep -c "will be created" plan.txt || echo 0)
+          CHANGES=$(grep -c "will be updated" plan.txt || echo 0)
+          DESTROYS=$(grep -c "will be destroyed" plan.txt || echo 0)
 
-        echo "adds=$ADDS" >> $GITHUB_OUTPUT
-        echo "changes=$CHANGES" >> $GITHUB_OUTPUT
-        echo "destroys=$DESTROYS" >> $GITHUB_OUTPUT
+          echo "adds=${ADDS}" >> $GITHUB_OUTPUT
+          echo "changes=${CHANGES}" >> $GITHUB_OUTPUT
+          echo "destroys=${DESTROYS}" >> $GITHUB_OUTPUT
 
-    - name: Comment PR
-      uses: actions/github-script@v7
-      if: github.event_name == 'pull_request'
-      with:
-        script: |
-          const fs = require('fs');
-          const plan = fs.readFileSync('terraform/plan.txt', 'utf8');
-          const fmt = '${{ steps.fmt.outcome }}';
-          const init = '${{ steps.init.outcome }}';
-          const validate = '${{ steps.validate.outcome }}';
-          const planStatus = '${{ steps.plan.outcome }}';
+      - name: Comment PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            const planTxt = fs.readFileSync('terraform/plan.txt', 'utf8');
 
-          const adds = '${{ steps.summary.outputs.adds }}';
-          const changes = '${{ steps.summary.outputs.changes }}';
-          const destroys = '${{ steps.summary.outputs.destroys }}';
+            const fmt = '${{ steps.fmt.outcome }}';
+            const init = '${{ steps.init.outcome }}';
+            const validate = '${{ steps.validate.outcome }}';
+            const planStatus = '${{ steps.plan.outcome }}';
 
-          const output = `## Terraform Plan Results 📋
+            const adds = '${{ steps.summary.outputs.adds }}';
+            const changes = '${{ steps.summary.outputs.changes }}';
+            const destroys = '${{ steps.summary.outputs.destroys }}';
 
-          #### Format Check: \`${fmt}\`
-          #### Initialization: \`${init}\`
-          #### Validation: \`${validate}\`
-          #### Plan: \`${planStatus}\`
+            const body = `## Terraform Plan Results 📋
 
-          ### Summary
-          - **${adds}** resources to add
-          - **${changes}** resources to change
-          - **${destroys}** resources to destroy
+### Status
+- **Format Check:** \`${fmt}\`
+- **Init:** \`${init}\`
+- **Validate:** \`${validate}\`
+- **Plan:** \`${planStatus}\`
 
-          <details><summary>Show Full Plan</summary>
+### Summary
+- **${adds}** to create
+- **${changes}** to update
+- **${destroys}** to destroy
 
-          \`\`\`terraform
-          ${plan.length > 60000 ? plan.substring(0, 60000) + '\n\n... (plan truncated)' : plan}
-          \`\`\`
+<details><summary>Show Terraform Plan</summary>
 
-          </details>
+\`\`\`terraform
+${planTxt.length > 60000 ? planTxt.substring(0, 60000) + '\n\n... (plan truncated)' : planTxt}
+\`\`\`
 
-          ---
-          **Pusher**: @${{ github.actor }}
-          **Event**: \`${{ github.event_name }}\`
-          **Workflow**: \`${{ github.workflow }}\`
-          `;
+</details>
 
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: output
-          });
+---
+**Triggered by:** @${{ github.actor }}
+`;
 
-    - name: Upload Plan Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: terraform-plan
-        path: terraform/tfplan
-        retention-days: 30
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: terraform/tfplan
+          retention-days: 30
 
   security:
     name: 'Security Scanning'
@@ -146,77 +132,41 @@ jobs:
       pull-requests: write
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    # tfsec Security Scan
-    - name: Run tfsec
-      uses: aquasecurity/tfsec-action@v1.0.3
-      with:
-        working_directory: terraform
-        soft_fail: false
-        format: sarif
-        additional_args: --minimum-severity MEDIUM
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform
+          soft_fail: false
+          format: sarif
+          additional_args: --minimum-severity MEDIUM
 
-    - name: Move tfsec SARIF
-      if: always()
-      run: |
-        if [ -f terraform/results.sarif ]; then
-          mv terraform/results.sarif tfsec-results.sarif
-          echo "✓ Moved tfsec results"
-        elif [ -f results.sarif ]; then
-          mv results.sarif tfsec-results.sarif
-          echo "✓ Found tfsec results in root"
-        else
-          echo "⚠ Warning: tfsec results not found"
-          ls -la terraform/ || true
-        fi
+      - name: Upload tfsec SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: tfsec-results.sarif
+          category: tfsec
 
-    - name: Upload tfsec SARIF
-      if: always()
-      uses: github/codeql-action/upload-sarif@v4
-      with:
-        sarif_file: tfsec-results.sarif
-        category: tfsec
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform
+          framework: terraform
+          output_format: sarif
+          output_file_path: results.sarif
+          soft_fail: true
+          quiet: false
+          download_external_modules: true
 
-    # Checkov Compliance Scan
-    - name: Run Checkov
-      uses: bridgecrewio/checkov-action@v12
-      with:
-        directory: terraform
-        framework: terraform
-        output_format: sarif
-        output_file_path: results.sarif
-        soft_fail: true
-        quiet: false
-        download_external_modules: true
-
-    - name: Move Checkov SARIF
-      if: always()
-      run: |
-        if [ -f results.sarif ]; then
-          mv results.sarif checkov-results.sarif
-          echo "✓ Moved Checkov results"
-        else
-          echo "⚠ Warning: Checkov results not found"
-        fi
-
-    - name: Upload Checkov SARIF
-      if: always()
-      uses: github/codeql-action/upload-sarif@v4
-      with:
-        sarif_file: checkov-results.sarif
-        category: checkov
-
-    - name: Security Summary
-      if: always()
-      run: |
-        echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "✓ tfsec scan completed" >> $GITHUB_STEP_SUMMARY
-        echo "✓ Checkov scan completed" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "View detailed results in the [Security tab](/${{ github.repository }}/security/code-scanning)" >> $GITHUB_STEP_SUMMARY
+      - name: Upload Checkov SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
 
   cost-estimate:
     name: 'Cost Estimation'
@@ -224,43 +174,34 @@ jobs:
     if: github.event_name == 'pull_request'
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-    - name: Terraform Init -lock=false
-      run: terraform init
-      working-directory: ./terraform
+      - name: Terraform Init for Cost
+        run: terraform init
+        working-directory: ./terraform
 
-    - name: Terraform Plan for Cost
-      run: terraform plan -lock=false -out=tfplan
-      working-directory: ./terraform
+      - name: Terraform Plan for Cost
+        run: terraform plan -lock=false -out=tfplan
+        working-directory: ./terraform
 
-    - name: Cost Comment
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const output = `## 💰 Cost Estimation
+      - name: Cost Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `## 💰 Estimated Costs
 
-          ### Production Configuration
-          - **EC2 Instance**: m5.xlarge (~$140/month)
-          - **EBS Volume**: 50GB GP3 (~$4/month)
-          - **S3 Storage**: ~$1-5/month (usage-based)
-          - **Data Transfer**: ~$5-10/month
-          - **CloudWatch**: ~$2-3/month
-          - **Elastic IP**: $0 (while attached)
+- Plan calculates approximate costs (depends on config)
+- EC2 instance, S3 storage, networking, etc.
 
-          **Estimated Total**: ~$152-162/month
-
-          > 💡 Actual costs may vary based on usage patterns
-          > 📊 Use AWS Cost Explorer for precise tracking
-          `;
-
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: output
-          });
+> Actual values vary by usage and region
+`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });

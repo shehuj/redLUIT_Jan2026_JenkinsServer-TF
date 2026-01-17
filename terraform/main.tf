@@ -1,51 +1,40 @@
-# IAM Instance Profile Module
-# Creates IAM role, policy, and instance profile for Jenkins EC2 instance
-module "jenkins_iam" {
-  source = "./modules/iam-instance-profile"
-
-  role_name             = local.iam_role_name
-  instance_profile_name = local.iam_instance_profile_name
-  policy_name           = local.iam_policy_name
-  s3_bucket_arn         = module.jenkins.s3_bucket_arn
-
-  tags = local.all_tags
+module "vpc" {
+  source     = "./modules/vpc"
+  name       = "jenkins-vpc"
+  cidr_block = "10.0.0.0/16"
+  public_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
 }
 
-# Jenkins Server Module
-# Creates EC2 instance, security group, and S3 bucket for Jenkins
+module "sg" {
+  source      = "./modules/security_group"
+  vpc_id      = module.vpc.vpc_id
+  name        = "jenkins-sg"
+  description = "SSH and Jenkins"
+  ingress = [
+    { from = 22, to = 22, protocol = "tcp", cidr = [var.allowed_ssh_cidr] },
+    { from = 8080, to = 8080, protocol = "tcp", cidr = ["0.0.0.0/0"] }
+  ]
+}
+
+module "artifact_bucket" {
+  source      = "./modules/s3_bucket"
+  bucket_name = var.artifact_bucket_name
+}
+
+module "iam" {
+  source    = "./modules/iam_role"
+  role_name = "jenkins-s3-role"
+  s3_resources = [
+    module.artifact_bucket.name,
+    "${module.artifact_bucket.name}/*"
+  ]
+}
+
 module "jenkins" {
-  source = "./modules/jenkins"
-
-  # Required variables
-  instance_type             = var.jenkins_instance_type
-  ssh_cidr_blocks           = concat([var.public_ip], var.allowed_ssh_cidrs)
-  artifacts_bucket_name     = local.s3_bucket_name
-  iam_instance_profile_name = module.jenkins_iam.instance_profile_name
-  environment               = var.environment
-
-  # Networking
-  jenkins_port     = var.jenkins_port
-  jenkins_ui_cidrs = var.jenkins_ui_cidrs
-
-  # Security
-  enable_kms_encryption      = local.enable_kms_encryption
-  enable_detailed_monitoring = local.enable_detailed_monitoring
-  enable_backup              = var.enable_backup
-
-  # S3 Configuration
-  enable_lifecycle_policy   = local.enable_s3_lifecycle
-  lifecycle_expiration_days = var.s3_lifecycle_expiration_days
-  enable_s3_logging         = false # Would require separate logging bucket
-  logging_bucket_name       = ""
-
-  # EC2 Configuration
-  root_volume_size  = local.root_volume_size
-  enable_elastic_ip = var.environment == "prod" ? true : false
-
-  # Monitoring
-  cloudwatch_retention_days = local.cloudwatch_retention_days
-  enable_cloudwatch_alarms  = var.environment == "prod" ? true : false
-  alarm_sns_topic_arn       = "" # Configure if SNS topic exists
-
-  tags = local.all_tags
+  source           = "./modules/ec2_jenkins"
+  subnet_id        = module.vpc.public_subnets_ids[0]
+  instance_type    = "t2.micro"
+  key_name         = var.key_pair_name
+  security_groups  = ["10.0.1.0/24"]
+  instance_profile = module.iam.instance_profile
 }
