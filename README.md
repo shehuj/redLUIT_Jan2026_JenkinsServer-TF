@@ -1,6 +1,58 @@
 # Jenkins Server Terraform Infrastructure
 
-Deploy a production-ready Jenkins CI/CD server on AWS with modular Terraform code.
+Deploy a production-ready Jenkins CI/CD server on AWS with automated workflows, security scanning, and approval gates.
+
+## 🚀 Quick Start
+
+**New to this project?** → See **[QUICK-START.md](QUICK-START.md)**
+
+**Setting up CI/CD?** → See **[WORKFLOWS.md](WORKFLOWS.md)**
+
+**Deploying manually?** → See **[DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md)**
+
+## ✨ Key Features
+
+- ✅ **Automated CI/CD** - Deploy on PR merge with approval gates
+- ✅ **Security Scanning** - tfsec + Checkov on every PR
+- ✅ **Production Ready** - Least privilege IAM, KMS encryption, monitoring
+- ✅ **Cost Optimized** - ~$150/month for production (free tier available)
+- ✅ **Well Documented** - Comprehensive guides for all scenarios
+
+## 📋 CI/CD Workflow
+
+This repository uses **decomposed workflows** for better control:
+
+### Pull Request Workflow
+```mermaid
+graph LR
+    A[Open PR] --> B[Format Check]
+    B --> C[Validate]
+    C --> D[Plan]
+    D --> E[Security Scan]
+    E --> F[Cost Estimate]
+    F --> G[PR Comment]
+```
+
+- Runs on all PRs affecting `terraform/**`
+- Validates changes without deploying
+- Posts plan, security results, and cost to PR
+- No infrastructure changes made
+
+### Deployment Workflow
+```mermaid
+graph LR
+    A[Merge to main] --> B[Plan]
+    B --> C[Wait for Approval]
+    C --> D[Deploy]
+    D --> E[Notify]
+```
+
+- Runs on merge to `main`
+- Requires manual approval (production environment)
+- Deploys infrastructure changes
+- Provides Jenkins URL in output
+
+See **[WORKFLOWS.md](WORKFLOWS.md)** for detailed workflow documentation.
 
 ## Overview
 

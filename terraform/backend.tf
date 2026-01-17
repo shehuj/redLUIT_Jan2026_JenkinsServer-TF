@@ -44,33 +44,24 @@
 #
 # ========================================================================
 
-# ⚠️  UNCOMMENT AND UPDATE THE BLOCK BELOW AFTER RUNNING setup-backend.sh
-#
-# terraform {
-#   backend "s3" {
-#     # S3 bucket name for storing Terraform state
-#     # Must be globally unique and already exist
-#     # REPLACE WITH YOUR ACTUAL BUCKET NAME
-#     bucket = "YOUR-TERRAFORM-STATE-BUCKET"
-#
-#     # Path within the bucket where state file will be stored
-#     # Recommended format: <project>/<environment>/terraform.tfstate
-#     # UPDATE FOR YOUR ENVIRONMENT (dev, staging, prod)
-#     key = "jenkins/dev/terraform.tfstate"
-#
-#     # AWS region where the S3 bucket is located
-#     # UPDATE IF USING A DIFFERENT REGION
-#     region = "us-east-1"
-#
-#     # DynamoDB table name for state locking
-#     # Must already exist with primary key: LockID (String)
-#     # REPLACE WITH YOUR ACTUAL TABLE NAME
-#     dynamodb_table = "YOUR-LOCK-TABLE"
-#
-#     # Enable encryption at rest for state file
-#     encrypt = true
-#
-#     # Optional: Use specific AWS profile
-#     # profile = "terraform"
-#   }
-# }
+# Backend configuration - CONFIGURED
+# S3 bucket and DynamoDB table created on 2026-01-17
+
+terraform {
+  backend "s3" {
+    # S3 bucket name for storing Terraform state
+    bucket = "ec2-shutdown-lambda-bucket"
+
+    # Path within the bucket where state file will be stored
+    key = "jenkins/prod/terraform.tfstate"
+
+    # AWS region where the S3 bucket is located
+    region = "us-east-1"
+
+    # DynamoDB table name for state locking
+    dynamodb_table = "dyning_table"
+
+    # Enable encryption at rest for state file
+    encrypt = true
+  }
+}

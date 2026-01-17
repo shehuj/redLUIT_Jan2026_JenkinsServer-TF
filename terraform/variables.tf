@@ -7,6 +7,7 @@ variable "aws_region" {
 variable "public_ip" {
   description = "Your public IP for SSH access (CIDR)"
   type        = string
+  default     = "203.0.113.0/32"
 
   validation {
     condition     = can(cidrhost(var.public_ip, 0))
@@ -23,6 +24,7 @@ variable "jenkins_instance_type" {
 variable "jenkins_s3_bucket_name" {
   description = "Unique name for Jenkins artifacts bucket"
   type        = string
+  default     = "jenkins-artifacts"
 }
 
 variable "environment" {
@@ -95,6 +97,7 @@ variable "jenkins_ui_cidrs" {
     - Open to internet (NOT RECOMMENDED): ["0.0.0.0/0"]
   EOT
   type        = list(string)
+  default     = ["0.0.0.0/0"]
 
   validation {
     condition = alltrue([
