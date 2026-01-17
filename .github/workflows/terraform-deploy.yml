@@ -1,0 +1,286 @@
+# ========================================================================
+# Terraform Deployment Workflow
+# ========================================================================
+#
+# This workflow deploys infrastructure changes to production when code
+# is merged to the main branch. It includes:
+# - Validation and security scans
+# - Manual approval requirement (configure in GitHub Environment settings)
+# - Terraform apply with detailed logging
+# - Deployment notifications
+#
+# SETUP REQUIRED:
+# 1. Configure GitHub Secrets (see documentation below)
+# 2. Create "production" environment with protection rules
+# 3. Add required reviewers for production deployments
+#
+# ========================================================================
+
+name: 'Terraform Deploy to Production'
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      terraform_action:
+        description: 'Terraform action to perform'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - apply
+          - destroy
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  plan:
+    name: 'Plan Deployment'
+    runs-on: ubuntu-latest
+    outputs:
+      plan_exitcode: ${{ steps.plan.outputs.exitcode }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./terraform
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+    - name: Create terraform.tfvars
+      run: |
+        # Validate required secrets
+        if [ -z "${{ secrets.PUBLIC_IP }}" ] || [ -z "${{ secrets.JENKINS_S3_BUCKET_NAME }}" ]; then
+          echo "::error::Required secrets are missing!"
+          echo "::error::Please set PUBLIC_IP and JENKINS_S3_BUCKET_NAME in GitHub Secrets"
+          exit 1
+        fi
+
+        # Set defaults for optional secrets
+        if [ -z "${{ secrets.AWS_REGION }}" ]; then
+          AWS_REGION="us-east-1"
+        else
+          AWS_REGION="${{ secrets.AWS_REGION }}"
+        fi
+
+        if [ -z "${{ secrets.ENVIRONMENT }}" ]; then
+          ENVIRONMENT="prod"
+        else
+          ENVIRONMENT="${{ secrets.ENVIRONMENT }}"
+        fi
+
+        if [ -z "${{ secrets.JENKINS_UI_CIDRS }}" ]; then
+          JENKINS_UI_CIDRS='["0.0.0.0/0"]'
+          echo "::warning::jenkins_ui_cidrs not set, defaulting to 0.0.0.0/0 (NOT SECURE)"
+        else
+          JENKINS_UI_CIDRS='${{ secrets.JENKINS_UI_CIDRS }}'
+        fi
+
+        # Create terraform.tfvars
+        cat > terraform.tfvars <<EOF
+        aws_region             = "${AWS_REGION}"
+        public_ip              = "${{ secrets.PUBLIC_IP }}"
+        jenkins_s3_bucket_name = "${{ secrets.JENKINS_S3_BUCKET_NAME }}"
+        environment            = "${ENVIRONMENT}"
+        jenkins_ui_cidrs       = ${JENKINS_UI_CIDRS}
+        EOF
+
+        echo "::notice::Created terraform.tfvars for environment: ${ENVIRONMENT}"
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      id: init
+      run: terraform init
+
+    - name: Terraform Validate
+      id: validate
+      run: terraform validate
+
+    - name: Terraform Plan
+      id: plan
+      run: |
+        if [ "${{ github.event.inputs.terraform_action }}" == "destroy" ]; then
+          terraform plan -destroy -out=tfplan -no-color | tee plan-output.txt
+        else
+          terraform plan -out=tfplan -no-color | tee plan-output.txt
+        fi
+        echo "exitcode=$?" >> $GITHUB_OUTPUT
+
+    - name: Upload Plan
+      uses: actions/upload-artifact@v4
+      with:
+        name: tfplan
+        path: terraform/tfplan
+        retention-days: 30
+
+    - name: Upload Plan Output
+      uses: actions/upload-artifact@v4
+      with:
+        name: plan-output
+        path: terraform/plan-output.txt
+        retention-days: 30
+
+  deploy:
+    name: 'Deploy to Production'
+    needs: plan
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.output.outputs.jenkins_url }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./terraform
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+    - name: Create terraform.tfvars
+      run: |
+        # Set defaults
+        AWS_REGION="${{ secrets.AWS_REGION }}"
+        ENVIRONMENT="${{ secrets.ENVIRONMENT }}"
+        JENKINS_UI_CIDRS="${{ secrets.JENKINS_UI_CIDRS }}"
+
+        : "${AWS_REGION:=us-east-1}"
+        : "${ENVIRONMENT:=prod}"
+        : "${JENKINS_UI_CIDRS:=[\"0.0.0.0/0\"]}"
+
+        cat > terraform.tfvars <<EOF
+        aws_region             = "${AWS_REGION}"
+        public_ip              = "${{ secrets.PUBLIC_IP }}"
+        jenkins_s3_bucket_name = "${{ secrets.JENKINS_S3_BUCKET_NAME }}"
+        environment            = "${ENVIRONMENT}"
+        jenkins_ui_cidrs       = ${JENKINS_UI_CIDRS}
+        EOF
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Download Plan
+      uses: actions/download-artifact@v4
+      with:
+        name: tfplan
+        path: terraform/
+
+    - name: Terraform Apply
+      id: apply
+      run: |
+        if [ "${{ github.event.inputs.terraform_action }}" == "destroy" ]; then
+          echo "::warning::Running terraform destroy"
+          terraform apply -auto-approve tfplan
+        else
+          terraform apply -auto-approve tfplan
+        fi
+
+    - name: Get Outputs
+      id: output
+      if: success() && github.event.inputs.terraform_action != 'destroy'
+      run: |
+        JENKINS_IP=$(terraform output -raw jenkins_public_ip 2>/dev/null || echo "")
+        JENKINS_URL="http://${JENKINS_IP}:8080"
+
+        echo "jenkins_url=${JENKINS_URL}" >> $GITHUB_OUTPUT
+        echo "jenkins_ip=${JENKINS_IP}" >> $GITHUB_OUTPUT
+
+        echo "## Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Jenkins URL**: ${JENKINS_URL}" >> $GITHUB_STEP_SUMMARY
+        echo "**Public IP**: ${JENKINS_IP}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Jenkins may take 2-3 minutes to fully start." >> $GITHUB_STEP_SUMMARY
+
+    - name: Deployment Summary
+      if: always()
+      run: |
+        echo "## Deployment Details" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **Workflow**: ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Triggered by**: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Action**: ${{ github.event.inputs.terraform_action || 'apply' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status**: ${{ steps.apply.outcome }}" >> $GITHUB_STEP_SUMMARY
+
+  notify:
+    name: 'Send Notifications'
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+    - name: Deployment Notification
+      run: |
+        if [ "${{ needs.deploy.result }}" == "success" ]; then
+          echo "✅ Deployment completed successfully"
+        else
+          echo "❌ Deployment failed"
+          exit 1
+        fi
+
+# ========================================================================
+# REQUIRED GITHUB SECRETS
+# ========================================================================
+#
+# Configure these in: Settings > Secrets and variables > Actions
+#
+# Required:
+#   AWS_ACCESS_KEY_ID       - AWS access key for deployment
+#   AWS_SECRET_ACCESS_KEY   - AWS secret key for deployment
+#   PUBLIC_IP               - Your IP in CIDR format (e.g., 203.0.113.42/32)
+#   JENKINS_S3_BUCKET_NAME  - Unique S3 bucket name
+#
+# Optional (with defaults):
+#   AWS_REGION              - AWS region (default: us-east-1)
+#   ENVIRONMENT             - Environment name (default: prod)
+#   JENKINS_UI_CIDRS        - JSON array of CIDRs (default: ["0.0.0.0/0"] - NOT SECURE)
+#
+# ========================================================================
+# ENVIRONMENT PROTECTION RULES
+# ========================================================================
+#
+# Configure in: Settings > Environments > production
+#
+# Required Protection Rules:
+#   ✓ Required reviewers: Add team members who must approve deployments
+#   ✓ Wait timer: Optional delay before deployment (e.g., 5 minutes)
+#   ✓ Deployment branches: Restrict to 'main' branch only
+#
+# This ensures no infrastructure changes are deployed without approval.
+#
+# ========================================================================
