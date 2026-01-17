@@ -1,6 +1,6 @@
 resource "aws_security_group" "this" {
-  vpc_id = var.vpc_id
-  name   = var.name
+  vpc_id      = var.vpc_id
+  name        = var.name
   description = var.description
 
   dynamic "ingress" {

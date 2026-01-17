@@ -14,7 +14,7 @@ resource "aws_iam_role" "role" {
 }
 
 resource "aws_iam_policy" "policy" {
-  name   = "${var.role_name}-policy"
+  name = "${var.role_name}-policy"
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
