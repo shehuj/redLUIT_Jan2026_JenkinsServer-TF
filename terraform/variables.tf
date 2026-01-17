@@ -97,7 +97,7 @@ variable "jenkins_ui_cidrs" {
     - Open to internet (NOT RECOMMENDED): ["0.0.0.0/0"]
   EOT
   type        = list(string)
-#  default     = ["0.0.0.0/0"]
+  default     = ["0.0.0.0/0"]
 
   validation {
     condition = alltrue([
