@@ -230,12 +230,12 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
 
-    - name: Terraform Init
+    - name: Terraform Init -lock=false
       run: terraform init
       working-directory: ./terraform
 
     - name: Terraform Plan for Cost
-      run: terraform plan -out=tfplan
+      run: terraform plan -lock=false -out=tfplan
       working-directory: ./terraform
 
     - name: Cost Comment
