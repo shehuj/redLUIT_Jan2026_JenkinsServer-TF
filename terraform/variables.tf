@@ -7,7 +7,7 @@ variable "aws_region" {
 variable "public_ip" {
   description = "Your public IP for SSH access (CIDR)"
   type        = string
-#  default     = "203.0.113.0/32"
+  default     = "203.0.113.0/32"
 
   validation {
     condition     = can(cidrhost(var.public_ip, 0))
