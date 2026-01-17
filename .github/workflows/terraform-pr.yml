@@ -3,7 +3,8 @@ name: Terraform PR Validation
 on:
   pull_request:
     branches:
-      - "*"
+      - main
+      - dev
     paths:
       - 'terraform/**'
       - '.github/workflows/terraform-pr.yml'
