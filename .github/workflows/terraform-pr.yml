@@ -1,9 +1,9 @@
-name: 'Terraform PR Validation'
+name: Terraform PR Validation
 
 on:
   pull_request:
     branches:
-      - dev
+      - "*"
     paths:
       - 'terraform/**'
       - '.github/workflows/terraform-pr.yml'
@@ -70,11 +70,13 @@ jobs:
           echo "destroys=${DESTROYS}" >> $GITHUB_OUTPUT
 
       - name: Comment PR
-        uses: actions/github-script@v7
         if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
+
+            // read the terraform plan output
             const planTxt = fs.readFileSync('terraform/plan.txt', 'utf8');
 
             const fmt = '${{ steps.fmt.outcome }}';
