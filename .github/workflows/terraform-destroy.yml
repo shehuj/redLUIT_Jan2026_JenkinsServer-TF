@@ -72,14 +72,36 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      - name: Determine Workspace
+        id: workspace
+        run: |
+          # Default to prod for destroy operations
+          echo "workspace=prod" >> $GITHUB_OUTPUT
+
       - name: Terraform Init
         id: init
-        working-directory: ./terraform
-        run: terraform init
+        working-directory: ./infra/terraform
+        run: |
+          WORKSPACE="${{ steps.workspace.outputs.workspace }}"
+
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
+            -backend-config="region=${{ secrets.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}" \
+            -backend-config="key=terraform-states/${WORKSPACE}/infra.tfstate"
+
+          # Idempotent workspace selection
+          if terraform workspace list | grep -q "\b${WORKSPACE}\b"; then
+            echo "Selecting workspace: ${WORKSPACE}"
+            terraform workspace select ${WORKSPACE}
+          else
+            echo "Warning: Workspace ${WORKSPACE} does not exist"
+            exit 1
+          fi
 
       - name: Show Current Resources
         id: show
-        working-directory: ./terraform
+        working-directory: ./infra/terraform
         run: |
           echo "## 📋 Current Infrastructure Inventory" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -138,21 +160,43 @@ jobs:
         with:
           terraform_wrapper: false
 
+      - name: Determine Workspace
+        id: workspace
+        run: |
+          # Default to prod for destroy operations, but this could be parameterized
+          echo "workspace=prod" >> $GITHUB_OUTPUT
+
       - name: Terraform Init
         id: init
-        working-directory: ./terraform
-        run: terraform init
+        working-directory: ./infra/terraform
+        run: |
+          WORKSPACE="${{ steps.workspace.outputs.workspace }}"
+
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
+            -backend-config="region=${{ secrets.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}" \
+            -backend-config="key=terraform-states/${WORKSPACE}/infra.tfstate"
+
+          # Idempotent workspace selection
+          if terraform workspace list | grep -q "\b${WORKSPACE}\b"; then
+            echo "Selecting workspace: ${WORKSPACE}"
+            terraform workspace select ${WORKSPACE}
+          else
+            echo "Warning: Workspace ${WORKSPACE} does not exist"
+            exit 1
+          fi
 
       - name: Terraform Destroy Plan
         id: plan
-        working-directory: ./terraform
+        working-directory: ./infra/terraform
         run: |
           terraform plan -destroy -out=destroy.tfplan 2>&1 | tee destroy_plan.txt
           echo "exitcode=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       - name: Show Destroy Plan Summary
-        working-directory: ./terraform
+        working-directory: ./infra/terraform
         run: |
           echo "## 🗑️ Terraform Destroy Plan" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -169,7 +213,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: destroy-plan-${{ github.sha }}
-          path: terraform/destroy.tfplan
+          path: infra/terraform/destroy.tfplan
           retention-days: 7
 
       - name: Clean S3 Buckets
@@ -207,7 +251,7 @@ jobs:
 
       - name: Terraform Destroy
         id: destroy
-        working-directory: ./terraform
+        working-directory: ./infra/terraform
         run: |
           echo "Starting Terraform destroy..."
           terraform destroy -auto-approve 2>&1 | tee destroy_output.txt

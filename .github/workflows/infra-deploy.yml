@@ -40,47 +40,57 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.6.7"
+          terraform_version: "1.6.0"
 
       # 🧠 Determine Terraform Workspace
       - name: Set Terraform Workspace
         id: workspace
         run: |
           if [[ "${GITHUB_REF##*/}" == "main" ]]; then
-            echo "TF_WORKSPACE=prod" >> $GITHUB_ENV
+            echo "workspace=prod" >> $GITHUB_OUTPUT
           else
-            echo "TF_WORKSPACE=dev"  >> $GITHUB_ENV
+            echo "workspace=dev" >> $GITHUB_OUTPUT
           fi
 
       # 🧾 Initialize Terraform with Remote Backend + Workspace
       - name: Terraform Init
         id: init
-        working-directory: ./terraform
+        working-directory: ./infra/terraform
         run: |
+          WORKSPACE="${{ steps.workspace.outputs.workspace }}"
+
           terraform init \
             -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
             -backend-config="region=${{ secrets.AWS_REGION }}" \
             -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}" \
-            -backend-config="key=terraform-states/${TF_WORKSPACE}/infra.tfstate"
+            -backend-config="key=terraform-states/${WORKSPACE}/infra.tfstate"
 
-          # Select or Create Workspace
-          terraform workspace list | grep -q "${TF_WORKSPACE}" || terraform workspace new ${TF_WORKSPACE}
-          terraform workspace select ${TF_WORKSPACE}
+          # Idempotent workspace creation: check if exists, create if not, then select
+          if ! terraform workspace list | grep -q "\b${WORKSPACE}\b"; then
+            echo "Creating workspace: ${WORKSPACE}"
+            terraform workspace new ${WORKSPACE}
+          else
+            echo "Workspace ${WORKSPACE} already exists, selecting it"
+            terraform workspace select ${WORKSPACE}
+          fi
+
+          # Set environment variable for subsequent steps
+          echo "TF_WORKSPACE=${WORKSPACE}" >> $GITHUB_ENV
 
       - name: Terraform Format Check
         id: fmt
-        working-directory: ./terraform
+        working-directory: ./infra/terraform
         run: terraform fmt -check -recursive
         continue-on-error: true
 
       - name: Terraform Validate
         id: validate
-        working-directory: ./terraform
+        working-directory: ./infra/terraform
         run: terraform validate
 
       - name: Terraform Plan
         id: plan
-        working-directory: ./terraform
+        working-directory: ./infra/terraform
         run: |
           terraform plan -var="environment=${TF_WORKSPACE}" -out=tfplan
 
@@ -88,18 +98,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: terraform-plan-${{ github.sha }}
-          path: terraform/tfplan
+          path: infra/terraform/tfplan
           retention-days: 7
 
       - name: Terraform Apply
         id: apply
-        working-directory: ./terraform
+        working-directory: ./infra/terraform
         run: terraform apply -auto-approve tfplan
 
       # 📤 Capture Terraform Outputs for Ansible
       - name: Capture Terraform Outputs
         id: tf_outputs
-        working-directory: ./terraform
+        working-directory: ./infra/terraform
         run: |
           JENKINS_IP=$(terraform output -raw jenkins_public_ip)
           JENKINS_INSTANCE_ID=$(terraform output -raw jenkins_instance_id)
