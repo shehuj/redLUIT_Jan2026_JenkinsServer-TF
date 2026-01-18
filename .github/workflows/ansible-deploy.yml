@@ -1,11 +1,16 @@
 name: Ansible Deploy
 
 on:
+  workflow_run:
+    workflows: ["Terraform Deploy"]
+    types:
+      - completed
   push:
     branches: [ "main", "dev" ]
     paths:
       - 'ansible/**'          # Only trigger on changes to ansible dir
       - '.github/workflows/ansible-deploy.yml'
+  workflow_dispatch:           # Allow manual trigger
 
 permissions:
   contents: read
@@ -19,6 +24,52 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Configure AWS Credentials to access Terraform state
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # Setup Terraform to read outputs
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.7"
+          terraform_wrapper: false  # Disable wrapper for clean output
+
+      # Determine workspace based on branch
+      - name: Set Terraform Workspace
+        id: workspace
+        run: |
+          if [[ "${GITHUB_REF##*/}" == "main" ]]; then
+            echo "TF_WORKSPACE=prod" >> $GITHUB_ENV
+          else
+            echo "TF_WORKSPACE=dev" >> $GITHUB_ENV
+          fi
+
+      # Initialize Terraform to access state
+      - name: Terraform Init
+        working-directory: ./infra/terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
+            -backend-config="region=${{ secrets.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}" \
+            -backend-config="key=terraform-states/${TF_WORKSPACE}/infra.tfstate"
+
+          terraform workspace select ${TF_WORKSPACE} || terraform workspace new ${TF_WORKSPACE}
+
+      # Get Jenkins IP from Terraform outputs
+      - name: Get Jenkins IP from Terraform
+        id: tf_outputs
+        working-directory: ./infra/terraform
+        run: |
+          JENKINS_IP=$(terraform output -raw jenkins_public_ip)
+          echo "jenkins_ip=${JENKINS_IP}" >> $GITHUB_OUTPUT
+          echo "📍 Retrieved Jenkins IP: ${JENKINS_IP}"
 
       # Install Python and dependencies for Ansible
       - name: Set up Python
@@ -45,11 +96,12 @@ jobs:
         id: inventory
         run: |
           mkdir -p ansible/inventory
-          # The workflow should get Jenkins IP from your Terraform deploy (e.g. from a stored artifact or repo state)
-          # Here we assume you populate the IP via an environment variable or a previous step
-          # Replace JENKINS_IP source with your own logic
           echo "[jenkins]" > ansible/inventory/hosts.ini
-          echo "${{ secrets.JENKINS_HOST_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/key.pem" >> ansible/inventory/hosts.ini
+          echo "jenkins_server ansible_host=${{ steps.tf_outputs.outputs.jenkins_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/key.pem" >> ansible/inventory/hosts.ini
+          echo "" >> ansible/inventory/hosts.ini
+          echo "[jenkins:vars]" >> ansible/inventory/hosts.ini
+          echo "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> ansible/inventory/hosts.ini
+          cat ansible/inventory/hosts.ini
 
       # Validate connectivity before running the playbook
       - name: Test Ansible Connectivity
@@ -68,11 +120,29 @@ jobs:
       - name: Retrieve Jenkins Initial Password
         id: get_password
         run: |
-          PASSWORD=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/key.pem ubuntu@${{ secrets.JENKINS_HOST_IP }} \
+          PASSWORD=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/key.pem ubuntu@${{ steps.tf_outputs.outputs.jenkins_ip }} \
             'sudo cat /var/lib/jenkins/secrets/initialAdminPassword')
           echo "password=$PASSWORD" >> $GITHUB_OUTPUT
 
-      - name: Print Jenkins access
+      # 📊 Display Summary
+      - name: Deployment Summary
         run: |
-          echo "Jenkins URL: http://${{ secrets.JENKINS_HOST_IP }}:8080"
+          echo "## ✅ Jenkins Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔐 Access Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Jenkins URL**: http://${{ steps.tf_outputs.outputs.jenkins_ip }}:8080" >> $GITHUB_STEP_SUMMARY
+          echo "- **Initial Admin Password**: \`${{ steps.get_password.outputs.password }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Navigate to the Jenkins URL above" >> $GITHUB_STEP_SUMMARY
+          echo "2. Use the Initial Admin Password to log in" >> $GITHUB_STEP_SUMMARY
+          echo "3. Complete the Jenkins setup wizard" >> $GITHUB_STEP_SUMMARY
+
+      - name: Print Jenkins Access
+        run: |
+          echo "======================================"
+          echo "🎉 Jenkins Deployment Successful!"
+          echo "======================================"
+          echo "Jenkins URL: http://${{ steps.tf_outputs.outputs.jenkins_ip }}:8080"
           echo "Initial Admin Password: ${{ steps.get_password.outputs.password }}"
+          echo "======================================"

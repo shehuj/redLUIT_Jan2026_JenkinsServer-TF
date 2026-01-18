@@ -95,3 +95,43 @@ jobs:
         id: apply
         working-directory: ./terraform
         run: terraform apply -auto-approve tfplan
+
+      # 📤 Capture Terraform Outputs for Ansible
+      - name: Capture Terraform Outputs
+        id: tf_outputs
+        working-directory: ./terraform
+        run: |
+          JENKINS_IP=$(terraform output -raw jenkins_public_ip)
+          JENKINS_INSTANCE_ID=$(terraform output -raw jenkins_instance_id)
+          echo "jenkins_ip=${JENKINS_IP}" >> $GITHUB_OUTPUT
+          echo "jenkins_instance_id=${JENKINS_INSTANCE_ID}" >> $GITHUB_OUTPUT
+          echo "📍 Jenkins Server IP: ${JENKINS_IP}"
+          echo "🆔 Jenkins Instance ID: ${JENKINS_INSTANCE_ID}"
+
+      # 💾 Save Outputs as Artifact for Ansible Workflow
+      - name: Save Jenkins IP to Artifact
+        run: |
+          mkdir -p outputs
+          echo "${{ steps.tf_outputs.outputs.jenkins_ip }}" > outputs/jenkins_ip.txt
+          echo "${{ steps.tf_outputs.outputs.jenkins_instance_id }}" > outputs/jenkins_instance_id.txt
+
+      - name: Upload Terraform Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ github.sha }}
+          path: outputs/
+          retention-days: 7
+
+      # 📊 Display Summary
+      - name: Deployment Summary
+        run: |
+          echo "## 🚀 Infrastructure Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${TF_WORKSPACE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Jenkins IP**: ${{ steps.tf_outputs.outputs.jenkins_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance ID**: ${{ steps.tf_outputs.outputs.jenkins_instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⏭️ Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Wait for the Ansible deployment workflow to run" >> $GITHUB_STEP_SUMMARY
+          echo "2. Access Jenkins at: http://${{ steps.tf_outputs.outputs.jenkins_ip }}:8080" >> $GITHUB_STEP_SUMMARY
