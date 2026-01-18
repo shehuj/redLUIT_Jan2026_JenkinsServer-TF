@@ -106,10 +106,15 @@ jobs:
 
       # Setup SSH key for Ansible
       - name: Configure SSH Key
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/jenkins_key.pem
+          echo "$SSH_KEY" > ~/.ssh/jenkins_key.pem
           chmod 600 ~/.ssh/jenkins_key.pem
+          # Verify key format
+          head -n 1 ~/.ssh/jenkins_key.pem
+          tail -n 1 ~/.ssh/jenkins_key.pem
           ssh-keyscan -H ${{ steps.tf_outputs.outputs.jenkins_ip }} >> ~/.ssh/known_hosts
 
       # Create Ansible inventory
