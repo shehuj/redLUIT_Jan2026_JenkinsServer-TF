@@ -112,10 +112,30 @@ jobs:
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/key.pem
           chmod 600 ~/.ssh/key.pem
+
+          # Check and convert key format if needed
+          if head -n 1 ~/.ssh/key.pem | grep -q "BEGIN OPENSSH PRIVATE KEY"; then
+            echo "Converting OpenSSH format to RSA format..."
+            ssh-keygen -p -N "" -m pem -f ~/.ssh/key.pem
+          fi
+
           # Verify key format
+          echo "Key format:"
           head -n 1 ~/.ssh/key.pem
-          tail -n 1 ~/.ssh/key.pem
+
+          # Add host key to known_hosts
           ssh-keyscan -H ${{ steps.tf_outputs.outputs.jenkins_ip }} >> ~/.ssh/known_hosts
+
+          # Start ssh-agent and add key
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/key.pem
+
+      # Test SSH connection
+      - name: Test SSH Connection
+        run: |
+          echo "Testing SSH connection to ${{ steps.tf_outputs.outputs.jenkins_ip }}..."
+          ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@${{ steps.tf_outputs.outputs.jenkins_ip }} \
+            'echo "SSH connection successful! Ubuntu version: $(lsb_release -d | cut -f2)"'
 
       # Wait for user-data script to complete
       - name: Wait for EC2 initialization
@@ -144,9 +164,19 @@ jobs:
           mkdir -p inventory
           cat > inventory/jenkins_hosts.ini <<EOF
           [jenkins]
-          ${{ steps.tf_outputs.outputs.jenkins_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/key.pem
+          ${{ steps.tf_outputs.outputs.jenkins_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=$HOME/.ssh/key.pem
+
+          [jenkins:vars]
+          ansible_python_interpreter=/usr/bin/python3
           EOF
           cat inventory/jenkins_hosts.ini
+
+      # Test Ansible connectivity
+      - name: Test Ansible Connection
+        working-directory: ./ansible
+        run: |
+          echo "Testing Ansible connectivity..."
+          ansible -i inventory/jenkins_hosts.ini jenkins -m ping -v
 
       # Run Ansible playbook
       - name: Deploy Jenkins with Ansible
