@@ -1,8 +1,20 @@
+# Get available AZs in the region
+data "aws_availability_zones" "available" {
+  state = "available"
+  # Exclude local zones and wavelength zones
+  filter {
+    name   = "opt-in-status"
+    values = ["opt-in-not-required"]
+  }
+}
+
 module "vpc" {
   source         = "./modules/vpc"
   name           = "jenkins-vpc"
   cidr_block     = "10.0.0.0/16"
   public_subnets = ["10.0.1.0/24", "10.0.3.0/24"]
+  # Use first two available AZs (typically us-east-1a and us-east-1b)
+  availability_zones = slice(data.aws_availability_zones.available.names, 0, 2)
 }
 
 module "sg" {
