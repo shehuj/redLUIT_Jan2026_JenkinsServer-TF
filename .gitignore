@@ -47,3 +47,27 @@ plan.txt
 
 # Ignore lock files for local development
 .terraform.lock.hcl.backup
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Ansible
+*.retry
+ansible/inventory/hosts.ini
+
+# SSH Keys
+*.pem
+*.key
+id_rsa*
+
+# Environment files
+.env
+.env.local

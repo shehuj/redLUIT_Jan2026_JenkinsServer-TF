@@ -5,12 +5,12 @@ on:
     branches: [ "dev" ]
     paths:
       - 'infra/terraform/**'
-      - '.github/workflows/terraform-deploy.yml'
+      - '.github/workflows/infra-deploy.yml'
   push:
     branches: [ "dev" ]
     paths:
       - 'infra/terraform/**'
-      - '.github/workflows/terraform-deploy.yml'
+      - '.github/workflows/infra-deploy.yml'
 
 permissions:
   contents: read
