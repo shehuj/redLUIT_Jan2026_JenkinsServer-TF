@@ -1,25 +1,43 @@
 ---
-- name: Install Java OpenJDK 11
-  ansible.builtin.shell: |
-    amazon-linux-extras install java-openjdk11 -y
-  args:
-    creates: /usr/bin/java
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
 
-- name: Download Jenkins repository
-  ansible.builtin.get_url:
-    url: https://pkg.jenkins.io/redhat-stable/jenkins.repo
-    dest: /etc/yum.repos.d/jenkins.repo
-    mode: '0644'
-
-- name: Import Jenkins GPG key
-  ansible.builtin.rpm_key:
+- name: Install Java OpenJDK 17
+  ansible.builtin.apt:
+    name: openjdk-17-jdk
     state: present
-    key: https://pkg.jenkins.io/redhat-stable/jenkins.io.key
+    update_cache: true
+
+- name: Install required packages
+  ansible.builtin.apt:
+    name:
+      - gnupg
+      - ca-certificates
+      - curl
+    state: present
+
+- name: Add Jenkins GPG key
+  ansible.builtin.apt_key:
+    url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+    state: present
+
+- name: Add Jenkins repository
+  ansible.builtin.apt_repository:
+    repo: deb https://pkg.jenkins.io/debian-stable binary/
+    state: present
+    filename: jenkins
+
+- name: Update apt cache after adding Jenkins repo
+  ansible.builtin.apt:
+    update_cache: true
 
 - name: Install Jenkins
-  ansible.builtin.yum:
+  ansible.builtin.apt:
     name: jenkins
     state: present
+    update_cache: true
 
 - name: Enable and start Jenkins service
   ansible.builtin.systemd:

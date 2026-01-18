@@ -110,12 +110,32 @@ jobs:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/jenkins_key.pem
-          chmod 600 ~/.ssh/jenkins_key.pem
+          echo "$SSH_KEY" > ~/.ssh/key.pem
+          chmod 600 ~/.ssh/key.pem
           # Verify key format
-          head -n 1 ~/.ssh/jenkins_key.pem
-          tail -n 1 ~/.ssh/jenkins_key.pem
+          head -n 1 ~/.ssh/key.pem
+          tail -n 1 ~/.ssh/key.pem
           ssh-keyscan -H ${{ steps.tf_outputs.outputs.jenkins_ip }} >> ~/.ssh/known_hosts
+
+      # Wait for user-data script to complete
+      - name: Wait for EC2 initialization
+        run: |
+          echo "Waiting for user-data script to complete on ${{ steps.tf_outputs.outputs.jenkins_ip }}..."
+          for i in {1..60}; do
+            if ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@${{ steps.tf_outputs.outputs.jenkins_ip }} \
+              'test -f /var/log/user-data-complete' 2>/dev/null; then
+              echo "✅ User-data script completed!"
+              ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.tf_outputs.outputs.jenkins_ip }} \
+                'cat /var/log/user-data-complete'
+              exit 0
+            fi
+            echo "Attempt $i/60: Initialization in progress, waiting 10 seconds..."
+            sleep 10
+          done
+          echo "⚠️ WARNING: User-data script did not complete in time (10 minutes), proceeding anyway..."
+          echo "Last 20 lines of user-data log:"
+          ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.tf_outputs.outputs.jenkins_ip }} \
+            'tail -20 /var/log/user-data.log' || echo "Could not retrieve user-data log"
 
       # Create Ansible inventory
       - name: Create Ansible Inventory
@@ -124,7 +144,7 @@ jobs:
           mkdir -p inventory
           cat > inventory/jenkins_hosts.ini <<EOF
           [jenkins]
-          ${{ steps.tf_outputs.outputs.jenkins_ip }} ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/jenkins_key.pem
+          ${{ steps.tf_outputs.outputs.jenkins_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/key.pem
           EOF
           cat inventory/jenkins_hosts.ini
 
@@ -142,7 +162,7 @@ jobs:
       - name: Get Jenkins Initial Password
         id: jenkins_password
         run: |
-          PASSWORD=$(ssh -i ~/.ssh/jenkins_key.pem -o StrictHostKeyChecking=no ec2-user@${{ steps.tf_outputs.outputs.jenkins_ip }} \
+          PASSWORD=$(ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.tf_outputs.outputs.jenkins_ip }} \
             'sudo cat /var/lib/jenkins/secrets/initialAdminPassword' 2>/dev/null || echo "PASSWORD_RETRIEVAL_FAILED")
           echo "password=${PASSWORD}" >> $GITHUB_OUTPUT
 
