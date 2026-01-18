@@ -23,5 +23,11 @@ variable "artifact_bucket_name" {
 variable "instance_type" {
   description = "EC2 instance type for Jenkins server"
   type        = string
-  default     = "m5.xlarge"
+  default     = "t3.large"
+  # Note: m5.xlarge is not available in all AZs
+  # Recommended alternatives:
+  # - t3.large (default, widely available, cheaper)
+  # - t3.xlarge (more resources)
+  # - m5.large (if m5 family preferred)
+  # - m5.xlarge (requires specific AZs)
 }
