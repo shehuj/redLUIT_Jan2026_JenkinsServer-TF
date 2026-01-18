@@ -1,16 +1,30 @@
 # SSH Key Fix for GitHub Actions
 
-## Problem Fixed
+## Problem
 
-The GitHub Actions workflow was failing with:
+The GitHub Actions workflow is failing with:
 ```
-Load key "/home/runner/.ssh/key.pem": error in libcrypto
-ubuntu@13.216.1.139: Permission denied (publickey).
+Error loading key "/home/runner/.ssh/key.pem": error in libcrypto
 ```
 
 ## Root Cause
 
-The SSH private key stored in GitHub Secrets was in **OpenSSH format** instead of the traditional **RSA format**, which causes compatibility issues with some SSH clients.
+The SSH private key in GitHub Secrets is either:
+1. **Corrupted** - Missing characters, extra whitespace, or wrong encoding
+2. **Wrong format** - Incompatible with the SSH client
+3. **Improperly copied** - Missing BEGIN/END lines or truncated
+
+## Quick Fix
+
+**→ See [SSH_KEY_TROUBLESHOOTING.md](SSH_KEY_TROUBLESHOOTING.md) for detailed step-by-step instructions.**
+
+### TL;DR
+
+1. Get your private key file (the `.pem` file from AWS)
+2. Validate it works: `ssh-keygen -y -f your-key.pem`
+3. Copy the entire content: `cat your-key.pem`
+4. Update GitHub Secret `SSH_PRIVATE_KEY` with the full content
+5. Push to trigger new workflow run
 
 ## Solutions Applied
 

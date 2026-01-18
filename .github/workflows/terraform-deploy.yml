@@ -110,32 +110,55 @@ jobs:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/key.pem
+
+          # Write the key using printf to avoid newline issues
+          printf "%s\n" "$SSH_KEY" > ~/.ssh/key.pem
           chmod 600 ~/.ssh/key.pem
+
+          # Debug: Show key format
+          echo "Original key format:"
+          head -n 1 ~/.ssh/key.pem
 
           # Check and convert key format if needed
           if head -n 1 ~/.ssh/key.pem | grep -q "BEGIN OPENSSH PRIVATE KEY"; then
-            echo "Converting OpenSSH format to RSA format..."
-            ssh-keygen -p -N "" -m pem -f ~/.ssh/key.pem
+            echo "Detected OpenSSH format - converting to RSA PEM format..."
+            # Use a temporary file for conversion
+            cp ~/.ssh/key.pem ~/.ssh/key.pem.orig
+            # Convert using ssh-keygen with proper options
+            ssh-keygen -p -f ~/.ssh/key.pem -m pem -P "" -N ""
+            echo "Conversion complete. New format:"
+            head -n 1 ~/.ssh/key.pem
+          elif head -n 1 ~/.ssh/key.pem | grep -q "BEGIN RSA PRIVATE KEY"; then
+            echo "Already in RSA PEM format - no conversion needed"
+          else
+            echo "Unknown key format:"
+            head -n 1 ~/.ssh/key.pem
+            echo "Attempting to use key as-is..."
           fi
 
-          # Verify key format
-          echo "Key format:"
-          head -n 1 ~/.ssh/key.pem
+          # Validate the key can be read
+          echo "Validating key..."
+          ssh-keygen -y -f ~/.ssh/key.pem > ~/.ssh/key.pub || {
+            echo "ERROR: Key validation failed!"
+            echo "Key might be corrupted or in an unsupported format"
+            exit 1
+          }
+          echo "Key validation successful"
 
           # Add host key to known_hosts
           ssh-keyscan -H ${{ steps.tf_outputs.outputs.jenkins_ip }} >> ~/.ssh/known_hosts
-
-          # Start ssh-agent and add key
-          eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/key.pem
 
       # Test SSH connection
       - name: Test SSH Connection
         run: |
           echo "Testing SSH connection to ${{ steps.tf_outputs.outputs.jenkins_ip }}..."
+          # Test SSH connection with verbose output for debugging
+          ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=10 -v ubuntu@${{ steps.tf_outputs.outputs.jenkins_ip }} \
+            'echo "SSH connection successful! Ubuntu version: $(lsb_release -d | cut -f2)"' 2>&1 | head -20
+
+          # Test again without verbose for clean output
           ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@${{ steps.tf_outputs.outputs.jenkins_ip }} \
-            'echo "SSH connection successful! Ubuntu version: $(lsb_release -d | cut -f2)"'
+            'echo "✅ SSH connection verified!"'
 
       # Wait for user-data script to complete
       - name: Wait for EC2 initialization
@@ -176,7 +199,11 @@ jobs:
         working-directory: ./ansible
         run: |
           echo "Testing Ansible connectivity..."
-          ansible -i inventory/jenkins_hosts.ini jenkins -m ping -v
+          # Show inventory
+          echo "Ansible inventory:"
+          cat inventory/jenkins_hosts.ini
+          # Test connection
+          ansible -i inventory/jenkins_hosts.ini jenkins -m ping -vvv
 
       # Run Ansible playbook
       - name: Deploy Jenkins with Ansible
