@@ -1,17 +1,19 @@
 name: Ansible Configuration
 
 on:
-  workflow_run:
-    workflows: ["Terraform Deploy"]
-    types:
-      - completed
-  workflow_dispatch:           # Allow manual trigger
-    inputs:
-      force_deploy:
-        description: 'Force Jenkins deployment (bypass branch check)'
-        required: false
-        type: boolean
-        default: false
+  pull_request:
+    branches: [ "main", "dev" ]
+    paths:
+      - 'ansible/**'
+      - 'infra/terraform/**'
+      - '.github/workflows/ansible-deploy.yml'
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'ansible/**'
+      - 'infra/terraform/**'
+      - '.github/workflows/ansible-deploy.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,29 +21,20 @@ permissions:
 
 jobs:
   # ============================================================================
-  # Job 1: Check Infrastructure Deployment (Runs on PRs only)
+  # Job 1: Check Infrastructure (Runs on PRs)
   # ============================================================================
   check-infrastructure:
-    name: Check Infrastructure (PR Only)
+    name: Validate Infrastructure
     runs-on: ubuntu-latest
-    # Run only on PR-triggered Terraform deploys that succeeded
-    if: |
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'pull_request'
-
-    # Future: Add environment protection here
-    # environment: staging
+    if: github.event_name == 'pull_request'
 
     steps:
-      - name: PR Infrastructure Check
+      - name: Validation Start
         run: |
-          echo "## 🔍 Infrastructure Validation (PR)" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔍 Infrastructure Validation" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Mode**: Pre-deployment validation only" >> $GITHUB_STEP_SUMMARY
-          echo "**Trigger**: Terraform Deploy on PR" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch**: ${{ github.event.workflow_run.head_branch }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Status**: ${{ github.event.workflow_run.conclusion }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode**: Pre-deployment validation for PR" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch**: ${{ github.head_ref }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
       - name: Checkout repository
@@ -96,6 +89,7 @@ jobs:
           # Check if outputs exist
           if ! terraform output -json 2>&1 | grep -q '"jenkins_public_ip"'; then
             echo "❌ No Terraform outputs found"
+            echo "Infrastructure must be deployed first. Run Terraform Deploy workflow."
             exit 1
           fi
 
@@ -196,21 +190,12 @@ jobs:
           echo "Full Jenkins deployment occurs when merged to main branch." >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
-  # Job 2: Deploy Jenkins (Runs on merge to main only)
+  # Job 2: Deploy Jenkins (Runs on push to main only)
   # ============================================================================
   deploy-jenkins:
-    name: Deploy Jenkins (Main Branch Only)
+    name: Deploy Jenkins
     runs-on: ubuntu-latest
-    # Run only on main branch pushes after Terraform succeeds, or manual override
-    if: |
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main') ||
-      (github.event_name == 'workflow_dispatch' && inputs.force_deploy == true)
-
-    # Future: Add environment protection here
-    # environment: production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Deployment Start
@@ -218,8 +203,8 @@ jobs:
           echo "## 🚀 Jenkins Deployment Started" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Mode**: Full Jenkins deployment" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch**: ${{ github.event.workflow_run.head_branch || 'manual' }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch**: main" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger**: Push to main branch" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
       - name: Checkout repository
@@ -271,6 +256,7 @@ jobs:
         run: |
           if ! terraform output -json 2>&1 | grep -q '"jenkins_public_ip"'; then
             echo "❌ No Terraform outputs found"
+            echo "Please ensure Terraform Deploy workflow ran successfully first"
             exit 1
           fi
 
