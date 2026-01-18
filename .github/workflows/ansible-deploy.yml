@@ -1,0 +1,78 @@
+name: Ansible Deploy
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+    paths:
+      - 'ansible/**'          # Only trigger on changes to ansible dir
+      - '.github/workflows/ansible-deploy.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-ansible:
+    name: Deploy Jenkins with Ansible
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Install Python and dependencies for Ansible
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Install Ansible & dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install ansible boto3 botocore
+
+      # Prepare SSH key for connecting to your EC2 instance
+      - name: Configure SSH Key
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf "%s\n" "$SSH_KEY" > ~/.ssh/key.pem
+          chmod 600 ~/.ssh/key.pem
+
+      # Create dynamic inventory file from Terraform output
+      - name: Build Ansible Inventory
+        id: inventory
+        run: |
+          mkdir -p ansible/inventory
+          # The workflow should get Jenkins IP from your Terraform deploy (e.g. from a stored artifact or repo state)
+          # Here we assume you populate the IP via an environment variable or a previous step
+          # Replace JENKINS_IP source with your own logic
+          echo "[jenkins]" > ansible/inventory/hosts.ini
+          echo "${{ secrets.JENKINS_HOST_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/key.pem" >> ansible/inventory/hosts.ini
+
+      # Validate connectivity before running the playbook
+      - name: Test Ansible Connectivity
+        run: |
+          ansible -i ansible/inventory/hosts.ini jenkins -m ping
+
+      # Run the Ansible Playbook
+      - name: Run Ansible Playbook
+        run: |
+          ansible-playbook \
+            -i ansible/inventory/hosts.ini \
+            ansible/playbooks/deploy_jenkins.yml \
+            -v
+
+      # Output Jenkins initial admin password
+      - name: Retrieve Jenkins Initial Password
+        id: get_password
+        run: |
+          PASSWORD=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/key.pem ubuntu@${{ secrets.JENKINS_HOST_IP }} \
+            'sudo cat /var/lib/jenkins/secrets/initialAdminPassword')
+          echo "password=$PASSWORD" >> $GITHUB_OUTPUT
+
+      - name: Print Jenkins access
+        run: |
+          echo "Jenkins URL: http://${{ secrets.JENKINS_HOST_IP }}:8080"
+          echo "Initial Admin Password: ${{ steps.get_password.outputs.password }}"
