@@ -3,6 +3,13 @@ name: Terraform Destroy - Resource Cleanup
 on:
   workflow_dispatch:
     inputs:
+      workspace:
+        description: 'Workspace to destroy (dev/prod)'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
       confirmation:
         description: 'Type "DESTROY" to confirm resource deletion'
         required: true
@@ -29,6 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       proceed: ${{ steps.check.outputs.proceed }}
+      workspace: ${{ steps.check.outputs.workspace }}
 
     steps:
       - name: Validate Destroy Confirmation
@@ -41,11 +49,13 @@ jobs:
           fi
           echo "✅ Confirmation validated"
           echo "proceed=true" >> $GITHUB_OUTPUT
+          echo "workspace=${{ github.event.inputs.workspace }}" >> $GITHUB_OUTPUT
 
       - name: Log Destruction Request
         run: |
           echo "## 🚨 DESTRUCTION REQUEST LOGGED" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Workspace:** ${{ github.event.inputs.workspace }}" >> $GITHUB_STEP_SUMMARY
           echo "**Requested by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "**Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
           echo "**Reason:** ${{ github.event.inputs.reason }}" >> $GITHUB_STEP_SUMMARY
@@ -71,18 +81,14 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-
-      - name: Determine Workspace
-        id: workspace
-        run: |
-          # Default to prod for destroy operations
-          echo "workspace=prod" >> $GITHUB_OUTPUT
+        with:
+          terraform_wrapper: false
 
       - name: Terraform Init
         id: init
         working-directory: ./infra/terraform
         run: |
-          WORKSPACE="${{ steps.workspace.outputs.workspace }}"
+          WORKSPACE="${{ needs.validate-input.outputs.workspace }}"
 
           terraform init \
             -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
@@ -95,19 +101,27 @@ jobs:
             echo "Selecting workspace: ${WORKSPACE}"
             terraform workspace select ${WORKSPACE}
           else
-            echo "Warning: Workspace ${WORKSPACE} does not exist"
-            exit 1
+            echo "⚠️ Warning: Workspace ${WORKSPACE} does not exist - may be already destroyed"
+            echo "## ⚠️ Workspace Not Found" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The workspace **${WORKSPACE}** does not exist in the backend." >> $GITHUB_STEP_SUMMARY
+            echo "This might mean the infrastructure was already destroyed or never created." >> $GITHUB_STEP_SUMMARY
+            exit 0
           fi
 
-      - name: Show Current Resources
+      - name: Show Current Resources in State
         id: show
         working-directory: ./infra/terraform
         run: |
-          echo "## 📋 Current Infrastructure Inventory" >> $GITHUB_STEP_SUMMARY
+          echo "## 📋 Current Terraform State Inventory" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details><summary>Click to view Terraform state</summary>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          terraform show -no-color 2>&1 | head -100 >> $GITHUB_STEP_SUMMARY || echo "No state found or error reading state" >> $GITHUB_STEP_SUMMARY
+          terraform show -no-color 2>&1 | head -200 >> $GITHUB_STEP_SUMMARY || echo "No state found or error reading state" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
       - name: List AWS Resources
@@ -115,34 +129,65 @@ jobs:
           echo "## 🔍 AWS Resources to be Destroyed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          # Get environment-specific tag
+          ENV_TAG="${{ needs.validate-input.outputs.workspace }}"
+
           # List EC2 instances
           echo "### EC2 Instances" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=JenkinsServer" "Name=instance-state-name,Values=running,stopped" \
-            --query 'Reservations[*].Instances[*].[InstanceId,PublicIpAddress,State.Name,Tags[?Key==`Name`].Value|[0]]' \
+            --filters "Name=tag:ManagedBy,Values=Terraform" "Name=instance-state-name,Values=running,stopped,pending,stopping" \
+            --query 'Reservations[*].Instances[*].[InstanceId,PublicIpAddress,PrivateIpAddress,State.Name,Tags[?Key==`Name`].Value|[0]]' \
             --output table >> $GITHUB_STEP_SUMMARY 2>&1 || echo "No EC2 instances found" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # List S3 buckets
-          echo "### S3 Buckets" >> $GITHUB_STEP_SUMMARY
-          aws s3 ls | grep jenkins || echo "No Jenkins S3 buckets found" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # List VPCs
           echo "### VPCs" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           aws ec2 describe-vpcs \
-            --filters "Name=tag:Name,Values=jenkins-vpc" \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
             --query 'Vpcs[*].[VpcId,CidrBlock,Tags[?Key==`Name`].Value|[0]]' \
             --output table >> $GITHUB_STEP_SUMMARY 2>&1 || echo "No VPCs found" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # List Subnets
+          echo "### Subnets" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          aws ec2 describe-subnets \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'Subnets[*].[SubnetId,VpcId,CidrBlock,Tags[?Key==`Name`].Value|[0]]' \
+            --output table >> $GITHUB_STEP_SUMMARY 2>&1 || echo "No subnets found" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # List Security Groups
+          echo "### Security Groups" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          aws ec2 describe-security-groups \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'SecurityGroups[*].[GroupId,GroupName,VpcId]' \
+            --output table >> $GITHUB_STEP_SUMMARY 2>&1 || echo "No security groups found" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # List EBS Volumes
+          echo "### EBS Volumes" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          aws ec2 describe-volumes \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'Volumes[*].[VolumeId,State,Size,Tags[?Key==`Name`].Value|[0]]' \
+            --output table >> $GITHUB_STEP_SUMMARY 2>&1 || echo "No EBS volumes found" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
   destroy:
     name: 'Destroy Infrastructure'
     runs-on: ubuntu-latest
     needs: [validate-input, pre-destroy-inventory]
-    environment:
-      name: production
-      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    # Add environment protection for production
+    environment: ${{ github.event.inputs.workspace == 'prod' && 'production' || 'development' }}
 
     steps:
       - name: Checkout repository
@@ -160,17 +205,11 @@ jobs:
         with:
           terraform_wrapper: false
 
-      - name: Determine Workspace
-        id: workspace
-        run: |
-          # Default to prod for destroy operations, but this could be parameterized
-          echo "workspace=prod" >> $GITHUB_OUTPUT
-
       - name: Terraform Init
         id: init
         working-directory: ./infra/terraform
         run: |
-          WORKSPACE="${{ steps.workspace.outputs.workspace }}"
+          WORKSPACE="${{ needs.validate-input.outputs.workspace }}"
 
           terraform init \
             -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
@@ -178,14 +217,16 @@ jobs:
             -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}" \
             -backend-config="key=terraform-states/${WORKSPACE}/infra.tfstate"
 
-          # Idempotent workspace selection
+          # Select workspace
           if terraform workspace list | grep -q "\b${WORKSPACE}\b"; then
             echo "Selecting workspace: ${WORKSPACE}"
             terraform workspace select ${WORKSPACE}
           else
-            echo "Warning: Workspace ${WORKSPACE} does not exist"
-            exit 1
+            echo "⚠️ Workspace ${WORKSPACE} does not exist - nothing to destroy"
+            exit 0
           fi
+
+          echo "TF_WORKSPACE=${WORKSPACE}" >> $GITHUB_ENV
 
       - name: Terraform Destroy Plan
         id: plan
@@ -212,67 +253,41 @@ jobs:
       - name: Upload Destroy Plan
         uses: actions/upload-artifact@v4
         with:
-          name: destroy-plan-${{ github.sha }}
+          name: destroy-plan-${{ github.event.inputs.workspace }}-${{ github.sha }}
           path: infra/terraform/destroy.tfplan
           retention-days: 7
-
-      - name: Clean S3 Buckets
-        id: clean_s3
-        run: |
-          echo "## 🧹 Cleaning S3 Buckets" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Find all S3 buckets with jenkins in the name
-          BUCKETS=$(aws s3 ls | grep jenkins | awk '{print $3}' || true)
-
-          if [ -z "$BUCKETS" ]; then
-            echo "No S3 buckets found with 'jenkins' in the name" >> $GITHUB_STEP_SUMMARY
-          else
-            for BUCKET in $BUCKETS; do
-              echo "Emptying bucket: $BUCKET" >> $GITHUB_STEP_SUMMARY
-              aws s3 rm s3://$BUCKET --recursive || echo "Failed to empty $BUCKET" >> $GITHUB_STEP_SUMMARY
-
-              # Delete all versions if versioning is enabled
-              aws s3api delete-objects --bucket $BUCKET \
-                --delete "$(aws s3api list-object-versions --bucket $BUCKET \
-                --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json)" \
-                2>/dev/null || echo "No versions to delete in $BUCKET"
-
-              # Delete all delete markers
-              aws s3api delete-objects --bucket $BUCKET \
-                --delete "$(aws s3api list-object-versions --bucket $BUCKET \
-                --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json)" \
-                2>/dev/null || echo "No delete markers in $BUCKET"
-            done
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "✅ S3 buckets emptied successfully" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
 
       - name: Terraform Destroy
         id: destroy
         working-directory: ./infra/terraform
         run: |
-          echo "Starting Terraform destroy..."
+          echo "Starting Terraform destroy for workspace: $TF_WORKSPACE..."
           terraform destroy -auto-approve 2>&1 | tee destroy_output.txt
           DESTROY_EXIT_CODE=${PIPESTATUS[0]}
 
           echo "Terraform destroy completed with exit code: $DESTROY_EXIT_CODE"
           echo "exitcode=$DESTROY_EXIT_CODE" >> $GITHUB_OUTPUT
 
+          if [ $DESTROY_EXIT_CODE -ne 0 ]; then
+            echo "⚠️ Terraform destroy encountered errors"
+            echo "Proceeding with orphaned resource cleanup..."
+          fi
+
           exit $DESTROY_EXIT_CODE
 
-      - name: Verify Cleanup
-        id: verify
+      - name: Verify Core Resources Destroyed
+        id: verify_core
         if: always()
         run: |
           echo "## 🔍 Post-Destroy Verification" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          ISSUES_FOUND=0
+
           # Check for remaining EC2 instances
           echo "### EC2 Instances" >> $GITHUB_STEP_SUMMARY
           INSTANCES=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=JenkinsServer" "Name=instance-state-name,Values=running,stopped,stopping" \
+            --filters "Name=tag:ManagedBy,Values=Terraform" "Name=instance-state-name,Values=running,stopped,stopping,pending" \
             --query 'Reservations[*].Instances[*].InstanceId' \
             --output text)
 
@@ -280,13 +295,14 @@ jobs:
             echo "✅ No EC2 instances remaining" >> $GITHUB_STEP_SUMMARY
           else
             echo "⚠️ Found remaining instances: $INSTANCES" >> $GITHUB_STEP_SUMMARY
+            ISSUES_FOUND=1
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Check for remaining VPCs
           echo "### VPCs" >> $GITHUB_STEP_SUMMARY
           VPCS=$(aws ec2 describe-vpcs \
-            --filters "Name=tag:Name,Values=jenkins-vpc" \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
             --query 'Vpcs[*].VpcId' \
             --output text)
 
@@ -294,19 +310,86 @@ jobs:
             echo "✅ No VPCs remaining" >> $GITHUB_STEP_SUMMARY
           else
             echo "⚠️ Found remaining VPCs: $VPCS" >> $GITHUB_STEP_SUMMARY
+            ISSUES_FOUND=1
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Check for remaining S3 buckets
-          echo "### S3 Buckets" >> $GITHUB_STEP_SUMMARY
-          S3_BUCKETS=$(aws s3 ls | grep jenkins | awk '{print $3}' || true)
+          # Check for remaining Security Groups
+          echo "### Security Groups" >> $GITHUB_STEP_SUMMARY
+          SGS=$(aws ec2 describe-security-groups \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'SecurityGroups[*].GroupId' \
+            --output text)
 
-          if [ -z "$S3_BUCKETS" ]; then
-            echo "✅ No S3 buckets remaining" >> $GITHUB_STEP_SUMMARY
+          if [ -z "$SGS" ]; then
+            echo "✅ No security groups remaining" >> $GITHUB_STEP_SUMMARY
           else
-            echo "⚠️ Found remaining buckets: $S3_BUCKETS" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ Found remaining security groups: $SGS" >> $GITHUB_STEP_SUMMARY
+            ISSUES_FOUND=1
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check for remaining Subnets
+          echo "### Subnets" >> $GITHUB_STEP_SUMMARY
+          SUBNETS=$(aws ec2 describe-subnets \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'Subnets[*].SubnetId' \
+            --output text)
+
+          if [ -z "$SUBNETS" ]; then
+            echo "✅ No subnets remaining" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Found remaining subnets: $SUBNETS" >> $GITHUB_STEP_SUMMARY
+            ISSUES_FOUND=1
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check for remaining Internet Gateways
+          echo "### Internet Gateways" >> $GITHUB_STEP_SUMMARY
+          IGWS=$(aws ec2 describe-internet-gateways \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'InternetGateways[*].InternetGatewayId' \
+            --output text)
+
+          if [ -z "$IGWS" ]; then
+            echo "✅ No internet gateways remaining" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Found remaining internet gateways: $IGWS" >> $GITHUB_STEP_SUMMARY
+            ISSUES_FOUND=1
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check for remaining Route Tables
+          echo "### Route Tables" >> $GITHUB_STEP_SUMMARY
+          RTS=$(aws ec2 describe-route-tables \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'RouteTables[*].RouteTableId' \
+            --output text)
+
+          if [ -z "$RTS" ]; then
+            echo "✅ No route tables remaining" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Found remaining route tables: $RTS" >> $GITHUB_STEP_SUMMARY
+            ISSUES_FOUND=1
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check for remaining EBS Volumes
+          echo "### EBS Volumes" >> $GITHUB_STEP_SUMMARY
+          VOLS=$(aws ec2 describe-volumes \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'Volumes[*].VolumeId' \
+            --output text)
+
+          if [ -z "$VOLS" ]; then
+            echo "✅ No EBS volumes remaining" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Found remaining volumes: $VOLS" >> $GITHUB_STEP_SUMMARY
+            ISSUES_FOUND=1
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "issues_found=$ISSUES_FOUND" >> $GITHUB_OUTPUT
 
       - name: Generate Final Summary
         if: always()
@@ -315,36 +398,34 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## 📊 Destruction Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Workspace:** ${{ needs.validate-input.outputs.workspace }}" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ steps.destroy.outcome }}" >> $GITHUB_STEP_SUMMARY
           echo "**Requested by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "**Reason:** ${{ github.event.inputs.reason }}" >> $GITHUB_STEP_SUMMARY
           echo "**Completed at:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ "${{ steps.destroy.outcome }}" == "success" ]; then
+          if [ "${{ steps.destroy.outcome }}" == "success" ] && [ "${{ steps.verify_core.outputs.issues_found }}" == "0" ]; then
             echo "### ✅ Infrastructure Successfully Destroyed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "All Terraform-managed resources have been removed from AWS." >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.destroy.outcome }}" == "success" ] && [ "${{ steps.verify_core.outputs.issues_found }}" != "0" ]; then
+            echo "### ⚠️ Destruction Completed with Issues" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Terraform destroy completed, but some resources remain." >> $GITHUB_STEP_SUMMARY
+            echo "The orphaned resource cleanup job will attempt to remove them." >> $GITHUB_STEP_SUMMARY
           else
             echo "### ❌ Destruction Failed or Incomplete" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Some resources may not have been destroyed. Please review the logs and verify manually." >> $GITHUB_STEP_SUMMARY
+            echo "Some resources may not have been destroyed. Please review the logs." >> $GITHUB_STEP_SUMMARY
+            echo "The orphaned resource cleanup job will attempt to clean up remaining resources." >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔐 State Management" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The Terraform state file remains in the S3 backend." >> $GITHUB_STEP_SUMMARY
-          echo "If you want to completely clean up:" >> $GITHUB_STEP_SUMMARY
-          echo "1. Manually delete the state file from S3" >> $GITHUB_STEP_SUMMARY
-          echo "2. Delete the DynamoDB lock table (if exists)" >> $GITHUB_STEP_SUMMARY
-          echo "3. Delete the S3 backend bucket (if no longer needed)" >> $GITHUB_STEP_SUMMARY
 
   cleanup-orphaned-resources:
     name: 'Cleanup Orphaned Resources'
     runs-on: ubuntu-latest
-    needs: destroy
+    needs: [validate-input, destroy]
     if: always()
 
     steps:
@@ -359,44 +440,225 @@ jobs:
         run: |
           echo "## 🧹 Orphaned Resources Cleanup" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Attempting to clean up any resources Terraform couldn't delete..." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Clean up any orphaned network interfaces
+          # Clean up orphaned network interfaces
           echo "### Network Interfaces" >> $GITHUB_STEP_SUMMARY
+          ENI_COUNT=0
           aws ec2 describe-network-interfaces \
-            --filters "Name=description,Values=*jenkins*" \
-            --query 'NetworkInterfaces[?Status==`available`].[NetworkInterfaceId]' \
+            --filters "Name=tag:ManagedBy,Values=Terraform" "Name=status,Values=available" \
+            --query 'NetworkInterfaces[*].NetworkInterfaceId' \
             --output text | while read -r eni; do
               if [ ! -z "$eni" ]; then
                 echo "Deleting orphaned ENI: $eni" >> $GITHUB_STEP_SUMMARY
-                aws ec2 delete-network-interface --network-interface-id $eni || echo "Failed to delete $eni" >> $GITHUB_STEP_SUMMARY
+                aws ec2 delete-network-interface --network-interface-id $eni 2>&1 || echo "Failed to delete $eni" >> $GITHUB_STEP_SUMMARY
+                ENI_COUNT=$((ENI_COUNT + 1))
               fi
-          done || echo "No orphaned network interfaces found" >> $GITHUB_STEP_SUMMARY
+          done || true
+          echo "Deleted $ENI_COUNT network interfaces" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Clean up any orphaned security groups
+          # Clean up orphaned security groups (retry logic for dependencies)
           echo "### Security Groups" >> $GITHUB_STEP_SUMMARY
-          aws ec2 describe-security-groups \
-            --filters "Name=group-name,Values=*jenkins*" \
-            --query 'SecurityGroups[?GroupName!=`default`].[GroupId,GroupName]' \
-            --output text | while read -r sg_id sg_name; do
-              if [ ! -z "$sg_id" ] && [ "$sg_name" != "default" ]; then
-                echo "Attempting to delete security group: $sg_id ($sg_name)" >> $GITHUB_STEP_SUMMARY
-                aws ec2 delete-security-group --group-id $sg_id 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "Could not delete $sg_id (may be in use)" >> $GITHUB_STEP_SUMMARY
-              fi
-          done || echo "No orphaned security groups found" >> $GITHUB_STEP_SUMMARY
+          SG_COUNT=0
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt to delete security groups..." >> $GITHUB_STEP_SUMMARY
+            aws ec2 describe-security-groups \
+              --filters "Name=tag:ManagedBy,Values=Terraform" \
+              --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+              --output text | while read -r sg_id; do
+                if [ ! -z "$sg_id" ]; then
+                  echo "Attempting to delete security group: $sg_id" >> $GITHUB_STEP_SUMMARY
+                  if aws ec2 delete-security-group --group-id $sg_id 2>&1; then
+                    echo "✅ Deleted $sg_id" >> $GITHUB_STEP_SUMMARY
+                    SG_COUNT=$((SG_COUNT + 1))
+                  else
+                    echo "⚠️ Could not delete $sg_id (may have dependencies)" >> $GITHUB_STEP_SUMMARY
+                  fi
+                fi
+            done || true
+            sleep 5
+          done
+          echo "Deleted $SG_COUNT security groups" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Clean up any orphaned EBS volumes
+          # Clean up internet gateways
+          echo "### Internet Gateways" >> $GITHUB_STEP_SUMMARY
+          IGW_COUNT=0
+          aws ec2 describe-internet-gateways \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'InternetGateways[*].[InternetGatewayId,Attachments[0].VpcId]' \
+            --output text | while read -r igw_id vpc_id; do
+              if [ ! -z "$igw_id" ]; then
+                echo "Detaching and deleting IGW: $igw_id from VPC: $vpc_id" >> $GITHUB_STEP_SUMMARY
+                if [ ! -z "$vpc_id" ]; then
+                  aws ec2 detach-internet-gateway --internet-gateway-id $igw_id --vpc-id $vpc_id 2>&1 || echo "Failed to detach $igw_id" >> $GITHUB_STEP_SUMMARY
+                fi
+                aws ec2 delete-internet-gateway --internet-gateway-id $igw_id 2>&1 || echo "Failed to delete $igw_id" >> $GITHUB_STEP_SUMMARY
+                IGW_COUNT=$((IGW_COUNT + 1))
+              fi
+          done || true
+          echo "Processed $IGW_COUNT internet gateways" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Clean up subnets
+          echo "### Subnets" >> $GITHUB_STEP_SUMMARY
+          SUBNET_COUNT=0
+          aws ec2 describe-subnets \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'Subnets[*].SubnetId' \
+            --output text | while read -r subnet_id; do
+              if [ ! -z "$subnet_id" ]; then
+                echo "Deleting subnet: $subnet_id" >> $GITHUB_STEP_SUMMARY
+                aws ec2 delete-subnet --subnet-id $subnet_id 2>&1 || echo "Failed to delete $subnet_id" >> $GITHUB_STEP_SUMMARY
+                SUBNET_COUNT=$((SUBNET_COUNT + 1))
+              fi
+          done || true
+          echo "Deleted $SUBNET_COUNT subnets" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Clean up route tables
+          echo "### Route Tables" >> $GITHUB_STEP_SUMMARY
+          RT_COUNT=0
+          aws ec2 describe-route-tables \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' \
+            --output text | while read -r rt_id; do
+              if [ ! -z "$rt_id" ]; then
+                echo "Deleting route table: $rt_id" >> $GITHUB_STEP_SUMMARY
+                aws ec2 delete-route-table --route-table-id $rt_id 2>&1 || echo "Failed to delete $rt_id" >> $GITHUB_STEP_SUMMARY
+                RT_COUNT=$((RT_COUNT + 1))
+              fi
+          done || true
+          echo "Deleted $RT_COUNT route tables" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Clean up VPCs
+          echo "### VPCs" >> $GITHUB_STEP_SUMMARY
+          VPC_COUNT=0
+          aws ec2 describe-vpcs \
+            --filters "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'Vpcs[*].VpcId' \
+            --output text | while read -r vpc_id; do
+              if [ ! -z "$vpc_id" ]; then
+                echo "Deleting VPC: $vpc_id" >> $GITHUB_STEP_SUMMARY
+                aws ec2 delete-vpc --vpc-id $vpc_id 2>&1 || echo "Failed to delete $vpc_id (may have dependencies)" >> $GITHUB_STEP_SUMMARY
+                VPC_COUNT=$((VPC_COUNT + 1))
+              fi
+          done || true
+          echo "Attempted to delete $VPC_COUNT VPCs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Clean up orphaned EBS volumes
           echo "### EBS Volumes" >> $GITHUB_STEP_SUMMARY
+          VOL_COUNT=0
           aws ec2 describe-volumes \
-            --filters "Name=status,Values=available" "Name=tag:Name,Values=*jenkins*" \
-            --query 'Volumes[*].[VolumeId]' \
+            --filters "Name=status,Values=available" "Name=tag:ManagedBy,Values=Terraform" \
+            --query 'Volumes[*].VolumeId' \
             --output text | while read -r vol; do
               if [ ! -z "$vol" ]; then
                 echo "Deleting orphaned volume: $vol" >> $GITHUB_STEP_SUMMARY
-                aws ec2 delete-volume --volume-id $vol || echo "Failed to delete $vol" >> $GITHUB_STEP_SUMMARY
+                aws ec2 delete-volume --volume-id $vol 2>&1 || echo "Failed to delete $vol" >> $GITHUB_STEP_SUMMARY
+                VOL_COUNT=$((VOL_COUNT + 1))
               fi
-          done || echo "No orphaned EBS volumes found" >> $GITHUB_STEP_SUMMARY
+          done || true
+          echo "Deleted $VOL_COUNT EBS volumes" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          echo "---" >> $GITHUB_STEP_SUMMARY
           echo "✅ Orphaned resources cleanup completed" >> $GITHUB_STEP_SUMMARY
+
+  final-verification:
+    name: 'Final Cleanup Verification'
+    runs-on: ubuntu-latest
+    needs: [validate-input, cleanup-orphaned-resources]
+    if: always()
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Final Resource Check
+        run: |
+          echo "## 🎯 Final Verification" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Checking for any remaining Terraform-managed resources..." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          ALL_CLEAN=true
+
+          # Check all resource types
+          INSTANCES=$(aws ec2 describe-instances --filters "Name=tag:ManagedBy,Values=Terraform" "Name=instance-state-name,Values=running,stopped,stopping,pending" --query 'Reservations[*].Instances[*].InstanceId' --output text)
+          VPCS=$(aws ec2 describe-vpcs --filters "Name=tag:ManagedBy,Values=Terraform" --query 'Vpcs[*].VpcId' --output text)
+          SGS=$(aws ec2 describe-security-groups --filters "Name=tag:ManagedBy,Values=Terraform" --query 'SecurityGroups[*].GroupId' --output text)
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=tag:ManagedBy,Values=Terraform" --query 'Subnets[*].SubnetId' --output text)
+          IGWS=$(aws ec2 describe-internet-gateways --filters "Name=tag:ManagedBy,Values=Terraform" --query 'InternetGateways[*].InternetGatewayId' --output text)
+          RTS=$(aws ec2 describe-route-tables --filters "Name=tag:ManagedBy,Values=Terraform" --query 'RouteTables[*].RouteTableId' --output text)
+          VOLS=$(aws ec2 describe-volumes --filters "Name=tag:ManagedBy,Values=Terraform" --query 'Volumes[*].VolumeId' --output text)
+
+          if [ ! -z "$INSTANCES" ]; then
+            echo "⚠️ **EC2 Instances still exist:** $INSTANCES" >> $GITHUB_STEP_SUMMARY
+            ALL_CLEAN=false
+          fi
+
+          if [ ! -z "$VPCS" ]; then
+            echo "⚠️ **VPCs still exist:** $VPCS" >> $GITHUB_STEP_SUMMARY
+            ALL_CLEAN=false
+          fi
+
+          if [ ! -z "$SGS" ]; then
+            echo "⚠️ **Security Groups still exist:** $SGS" >> $GITHUB_STEP_SUMMARY
+            ALL_CLEAN=false
+          fi
+
+          if [ ! -z "$SUBNETS" ]; then
+            echo "⚠️ **Subnets still exist:** $SUBNETS" >> $GITHUB_STEP_SUMMARY
+            ALL_CLEAN=false
+          fi
+
+          if [ ! -z "$IGWS" ]; then
+            echo "⚠️ **Internet Gateways still exist:** $IGWS" >> $GITHUB_STEP_SUMMARY
+            ALL_CLEAN=false
+          fi
+
+          if [ ! -z "$RTS" ]; then
+            echo "⚠️ **Route Tables still exist:** $RTS" >> $GITHUB_STEP_SUMMARY
+            ALL_CLEAN=false
+          fi
+
+          if [ ! -z "$VOLS" ]; then
+            echo "⚠️ **EBS Volumes still exist:** $VOLS" >> $GITHUB_STEP_SUMMARY
+            ALL_CLEAN=false
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$ALL_CLEAN" = true ]; then
+            echo "### ✅ All Resources Successfully Cleaned Up" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "No Terraform-managed resources remain in AWS for workspace **${{ needs.validate-input.outputs.workspace }}**." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ⚠️ Some Resources Still Remain" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Some resources could not be automatically deleted." >> $GITHUB_STEP_SUMMARY
+            echo "This may be due to:" >> $GITHUB_STEP_SUMMARY
+            echo "- AWS resource dependencies" >> $GITHUB_STEP_SUMMARY
+            echo "- Resources created outside of Terraform" >> $GITHUB_STEP_SUMMARY
+            echo "- Resources with deletion protection enabled" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Please manually review and delete these resources in the AWS console." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Additional Notes" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Terraform state file remains in S3 backend" >> $GITHUB_STEP_SUMMARY
+          echo "- To completely remove the workspace, delete: \`terraform-states/${{ needs.validate-input.outputs.workspace }}/infra.tfstate\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Backend infrastructure (S3 bucket, DynamoDB table) is NOT destroyed" >> $GITHUB_STEP_SUMMARY
