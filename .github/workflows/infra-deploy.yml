@@ -92,7 +92,7 @@ jobs:
         id: plan
         working-directory: ./infra/terraform
         run: |
-          terraform plan -var="environment=${TF_WORKSPACE}" -out=tfplan
+          terraform plan -out=tfplan
 
       - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
@@ -111,8 +111,31 @@ jobs:
         id: tf_outputs
         working-directory: ./infra/terraform
         run: |
-          JENKINS_IP=$(terraform output -raw jenkins_public_ip)
-          JENKINS_INSTANCE_ID=$(terraform output -raw jenkins_instance_id)
+          # Retrieve outputs with error handling
+          JENKINS_IP=$(terraform output -raw jenkins_public_ip 2>&1 || echo "")
+          JENKINS_INSTANCE_ID=$(terraform output -raw jenkins_instance_id 2>&1 || echo "")
+
+          # Validate outputs exist and are non-empty
+          if [[ -z "${JENKINS_IP}" ]] || [[ -z "${JENKINS_INSTANCE_ID}" ]]; then
+            echo "❌ Error: Failed to retrieve Terraform outputs"
+            echo "Jenkins IP: '${JENKINS_IP}'"
+            echo "Instance ID: '${JENKINS_INSTANCE_ID}'"
+            terraform output  # Show all outputs for debugging
+            exit 1
+          fi
+
+          # Validate IP format
+          if [[ ! "${JENKINS_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Error: Invalid Jenkins IP format: '${JENKINS_IP}'"
+            exit 1
+          fi
+
+          # Validate Instance ID format (starts with i-)
+          if [[ ! "${JENKINS_INSTANCE_ID}" =~ ^i-[a-f0-9]+$ ]]; then
+            echo "❌ Error: Invalid Instance ID format: '${JENKINS_INSTANCE_ID}'"
+            exit 1
+          fi
+
           echo "jenkins_ip=${JENKINS_IP}" >> $GITHUB_OUTPUT
           echo "jenkins_instance_id=${JENKINS_INSTANCE_ID}" >> $GITHUB_OUTPUT
           echo "📍 Jenkins Server IP: ${JENKINS_IP}"

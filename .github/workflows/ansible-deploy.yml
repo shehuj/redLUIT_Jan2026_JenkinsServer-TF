@@ -79,7 +79,25 @@ jobs:
         id: tf_outputs
         working-directory: ./infra/terraform
         run: |
-          JENKINS_IP=$(terraform output -raw jenkins_public_ip)
+          # Check if state has any outputs
+          if ! terraform output -json 2>&1 | grep -q '"jenkins_public_ip"'; then
+            echo "❌ Error: No Terraform outputs found. Infrastructure may not be deployed yet."
+            echo ""
+            echo "Please ensure the 'Terraform Deploy' workflow has completed successfully first."
+            echo "Current workspace: ${TF_WORKSPACE}"
+            exit 1
+          fi
+
+          # Retrieve the Jenkins IP
+          JENKINS_IP=$(terraform output -raw jenkins_public_ip 2>&1)
+
+          # Validate the output is a valid IP address
+          if [[ ! "${JENKINS_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Error: Invalid or empty Jenkins IP: '${JENKINS_IP}'"
+            echo "The infrastructure may not be fully deployed. Please check the Terraform state."
+            exit 1
+          fi
+
           echo "jenkins_ip=${JENKINS_IP}" >> $GITHUB_OUTPUT
           echo "📍 Retrieved Jenkins IP: ${JENKINS_IP}"
 
