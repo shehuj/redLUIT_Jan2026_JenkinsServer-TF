@@ -87,3 +87,16 @@ fi
 # Create marker file
 echo "Jenkins installation completed at $(date)" > /var/log/jenkins-install-complete
 echo "=== Jenkins Installation Script Completed Successfully at $(date) ==="
+
+# Create SSH key for ansible access
+echo "Creating SSH key for Ansible access..."
+ssh-keygen -t rsa -b 2048 -f /home/ubuntu/.ssh/id_rsa -q -N ""
+chown ubuntu:ubuntu /home/ubuntu/.ssh/id_rsa*
+chmod 600 /home/ubuntu/.ssh/id_rsa
+chmod 644 /home/ubuntu/.ssh/id_rsa.pub
+echo "SSH key created at /home/ubuntu/.ssh/id_rsa and /home/ubuntu/.ssh/id_rsa.pub"
+echo "Public Key:" > /home/ubuntu/jenkins_key.txt
+cat /home/ubuntu/.ssh/id_rsa.pub
+echo "=== SSH Key Creation Completed at $(date) ==="
+
+ 
