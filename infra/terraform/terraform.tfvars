@@ -12,6 +12,11 @@ ec2_ami             = "ami-0e2c8caa4b6378d8c"  # Ubuntu 24.04 LTS
 
 ec2_instance_type   = "t3.micro"
 
+# SSH Key Pair - IMPORTANT: Create this key pair in AWS EC2 console first!
+# Set to null if you don't need SSH access (not recommended for production)
+# Example: ssh_key_name = "my-jenkins-key"
+ssh_key_name        = null
+
 common_tags = {
   Name        = "JenkinsServer"
   Environment = "dev"

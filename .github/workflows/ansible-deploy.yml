@@ -74,8 +74,8 @@ jobs:
           # Set environment variable for subsequent steps
           echo "TF_WORKSPACE=${WORKSPACE}" >> $GITHUB_ENV
 
-      # Get Jenkins IP from Terraform outputs
-      - name: Get Jenkins IP from Terraform
+      # Get Jenkins connection info from Terraform outputs
+      - name: Get Jenkins Connection Info
         id: tf_outputs
         working-directory: ./infra/terraform
         run: |
@@ -88,18 +88,32 @@ jobs:
             exit 1
           fi
 
-          # Retrieve the Jenkins IP
-          JENKINS_IP=$(terraform output -raw jenkins_public_ip 2>&1)
+          # Retrieve both public and private IPs
+          JENKINS_PUBLIC_IP=$(terraform output -raw jenkins_public_ip 2>&1)
+          JENKINS_PRIVATE_IP=$(terraform output -raw jenkins_private_ip 2>&1)
 
-          # Validate the output is a valid IP address
-          if [[ ! "${JENKINS_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "❌ Error: Invalid or empty Jenkins IP: '${JENKINS_IP}'"
+          # Validate the public IP is a valid IP address
+          if [[ ! "${JENKINS_PUBLIC_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Error: Invalid or empty Jenkins public IP: '${JENKINS_PUBLIC_IP}'"
             echo "The infrastructure may not be fully deployed. Please check the Terraform state."
             exit 1
           fi
 
-          echo "jenkins_ip=${JENKINS_IP}" >> $GITHUB_OUTPUT
-          echo "📍 Retrieved Jenkins IP: ${JENKINS_IP}"
+          # Validate the private IP is a valid IP address
+          if [[ ! "${JENKINS_PRIVATE_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Error: Invalid or empty Jenkins private IP: '${JENKINS_PRIVATE_IP}'"
+            echo "The infrastructure may not be fully deployed. Please check the Terraform state."
+            exit 1
+          fi
+
+          # Use public IP for GitHub Actions (external access)
+          # For internal VPC access, you could use JENKINS_PRIVATE_IP instead
+          echo "jenkins_ip=${JENKINS_PUBLIC_IP}" >> $GITHUB_OUTPUT
+          echo "jenkins_private_ip=${JENKINS_PRIVATE_IP}" >> $GITHUB_OUTPUT
+
+          echo "📍 Retrieved Jenkins Public IP: ${JENKINS_PUBLIC_IP}"
+          echo "🔒 Retrieved Jenkins Private IP: ${JENKINS_PRIVATE_IP}"
+          echo "ℹ️  Using public IP for Ansible connection from GitHub Actions"
 
       # Install Python and dependencies for Ansible
       - name: Set up Python
@@ -133,10 +147,34 @@ jobs:
           echo "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> ansible/inventory/hosts.ini
           cat ansible/inventory/hosts.ini
 
+      # Wait for EC2 instance to be fully ready
+      - name: Wait for EC2 Instance to be Ready
+        run: |
+          echo "⏳ Waiting for EC2 instance to be ready for SSH..."
+          MAX_ATTEMPTS=30
+          ATTEMPT=0
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/key.pem ubuntu@${{ steps.tf_outputs.outputs.jenkins_ip }} "echo 'SSH connection successful'" 2>/dev/null; then
+              echo "✅ EC2 instance is ready!"
+              break
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Instance not ready yet, waiting 10 seconds..."
+            sleep 10
+          done
+
+          if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+            echo "❌ Error: EC2 instance did not become ready within the expected time"
+            exit 1
+          fi
+
       # Validate connectivity before running the playbook
       - name: Test Ansible Connectivity
         run: |
-          ansible -i ansible/inventory/hosts.ini jenkins -m ping
+          echo "🔍 Testing Ansible connectivity..."
+          ansible -i ansible/inventory/hosts.ini jenkins -m ping -v
 
       # Run the Ansible Playbook
       - name: Run Ansible Playbook

@@ -112,21 +112,31 @@ jobs:
         working-directory: ./infra/terraform
         run: |
           # Retrieve outputs with error handling
-          JENKINS_IP=$(terraform output -raw jenkins_public_ip 2>&1 || echo "")
+          JENKINS_PUBLIC_IP=$(terraform output -raw jenkins_public_ip 2>&1 || echo "")
+          JENKINS_PRIVATE_IP=$(terraform output -raw jenkins_private_ip 2>&1 || echo "")
           JENKINS_INSTANCE_ID=$(terraform output -raw jenkins_instance_id 2>&1 || echo "")
+          JENKINS_PUBLIC_DNS=$(terraform output -raw jenkins_public_dns 2>&1 || echo "")
+          JENKINS_AZ=$(terraform output -raw jenkins_availability_zone 2>&1 || echo "")
 
           # Validate outputs exist and are non-empty
-          if [[ -z "${JENKINS_IP}" ]] || [[ -z "${JENKINS_INSTANCE_ID}" ]]; then
+          if [[ -z "${JENKINS_PUBLIC_IP}" ]] || [[ -z "${JENKINS_INSTANCE_ID}" ]]; then
             echo "❌ Error: Failed to retrieve Terraform outputs"
-            echo "Jenkins IP: '${JENKINS_IP}'"
+            echo "Public IP: '${JENKINS_PUBLIC_IP}'"
+            echo "Private IP: '${JENKINS_PRIVATE_IP}'"
             echo "Instance ID: '${JENKINS_INSTANCE_ID}'"
             terraform output  # Show all outputs for debugging
             exit 1
           fi
 
-          # Validate IP format
-          if [[ ! "${JENKINS_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "❌ Error: Invalid Jenkins IP format: '${JENKINS_IP}'"
+          # Validate public IP format
+          if [[ ! "${JENKINS_PUBLIC_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Error: Invalid public IP format: '${JENKINS_PUBLIC_IP}'"
+            exit 1
+          fi
+
+          # Validate private IP format
+          if [[ ! "${JENKINS_PRIVATE_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Error: Invalid private IP format: '${JENKINS_PRIVATE_IP}'"
             exit 1
           fi
 
@@ -136,17 +146,27 @@ jobs:
             exit 1
           fi
 
-          echo "jenkins_ip=${JENKINS_IP}" >> $GITHUB_OUTPUT
+          echo "jenkins_public_ip=${JENKINS_PUBLIC_IP}" >> $GITHUB_OUTPUT
+          echo "jenkins_private_ip=${JENKINS_PRIVATE_IP}" >> $GITHUB_OUTPUT
           echo "jenkins_instance_id=${JENKINS_INSTANCE_ID}" >> $GITHUB_OUTPUT
-          echo "📍 Jenkins Server IP: ${JENKINS_IP}"
+          echo "jenkins_public_dns=${JENKINS_PUBLIC_DNS}" >> $GITHUB_OUTPUT
+          echo "jenkins_az=${JENKINS_AZ}" >> $GITHUB_OUTPUT
+
+          echo "📍 Jenkins Public IP: ${JENKINS_PUBLIC_IP}"
+          echo "🔒 Jenkins Private IP: ${JENKINS_PRIVATE_IP}"
           echo "🆔 Jenkins Instance ID: ${JENKINS_INSTANCE_ID}"
+          echo "🌐 Jenkins Public DNS: ${JENKINS_PUBLIC_DNS}"
+          echo "📍 Availability Zone: ${JENKINS_AZ}"
 
       # 💾 Save Outputs as Artifact for Ansible Workflow
-      - name: Save Jenkins IP to Artifact
+      - name: Save Jenkins Connection Info
         run: |
           mkdir -p outputs
-          echo "${{ steps.tf_outputs.outputs.jenkins_ip }}" > outputs/jenkins_ip.txt
+          echo "${{ steps.tf_outputs.outputs.jenkins_public_ip }}" > outputs/jenkins_public_ip.txt
+          echo "${{ steps.tf_outputs.outputs.jenkins_private_ip }}" > outputs/jenkins_private_ip.txt
           echo "${{ steps.tf_outputs.outputs.jenkins_instance_id }}" > outputs/jenkins_instance_id.txt
+          echo "${{ steps.tf_outputs.outputs.jenkins_public_dns }}" > outputs/jenkins_public_dns.txt
+          echo "${{ steps.tf_outputs.outputs.jenkins_az }}" > outputs/jenkins_az.txt
 
       - name: Upload Terraform Outputs
         uses: actions/upload-artifact@v4
@@ -162,9 +182,16 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📋 Deployment Details" >> $GITHUB_STEP_SUMMARY
           echo "- **Environment**: ${TF_WORKSPACE}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Jenkins IP**: ${{ steps.tf_outputs.outputs.jenkins_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Public IP**: ${{ steps.tf_outputs.outputs.jenkins_public_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Private IP**: ${{ steps.tf_outputs.outputs.jenkins_private_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Public DNS**: ${{ steps.tf_outputs.outputs.jenkins_public_dns }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Instance ID**: ${{ steps.tf_outputs.outputs.jenkins_instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Availability Zone**: ${{ steps.tf_outputs.outputs.jenkins_az }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🌐 Access Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Jenkins URL**: http://${{ steps.tf_outputs.outputs.jenkins_public_ip }}:8080" >> $GITHUB_STEP_SUMMARY
+          echo "- **SSH Command**: \`ssh ubuntu@${{ steps.tf_outputs.outputs.jenkins_public_ip }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### ⏭️ Next Steps" >> $GITHUB_STEP_SUMMARY
           echo "1. Wait for the Ansible deployment workflow to run" >> $GITHUB_STEP_SUMMARY
-          echo "2. Access Jenkins at: http://${{ steps.tf_outputs.outputs.jenkins_ip }}:8080" >> $GITHUB_STEP_SUMMARY
+          echo "2. Access Jenkins at the URL above" >> $GITHUB_STEP_SUMMARY
