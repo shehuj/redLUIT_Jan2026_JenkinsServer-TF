@@ -1,0 +1,137 @@
+name: Terraform Deploy
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-deploy.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_LOG: WARN
+  TF_IN_AUTOMATION: true
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+  deploy:
+    name: 'Deploy Infrastructure'
+    runs-on: ubuntu-latest
+
+    # Use environments if you have protections set (optional)
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.7"
+
+      # 🧠 Determine Terraform Workspace
+      - name: Set Terraform Workspace
+        id: workspace
+        run: |
+          if [[ "${GITHUB_REF##*/}" == "main" ]]; then
+            echo "TF_WORKSPACE=prod" >> $GITHUB_ENV
+          else
+            echo "TF_WORKSPACE=dev"  >> $GITHUB_ENV
+          fi
+
+      # 🧾 Initialize Terraform with Remote Backend + Workspace
+      - name: Terraform Init
+        id: init
+        working-directory: ./terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
+            -backend-config="region=${{ secrets.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}" \
+            -backend-config="key=terraform-states/${TF_WORKSPACE}/infra.tfstate"
+
+          # Select or Create Workspace
+          terraform workspace list | grep -q "${TF_WORKSPACE}" || terraform workspace new ${TF_WORKSPACE}
+          terraform workspace select ${TF_WORKSPACE}
+
+      - name: Terraform Format Check
+        id: fmt
+        working-directory: ./terraform
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Validate
+        id: validate
+        working-directory: ./terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ./terraform
+        run: |
+          terraform plan -var="environment=${TF_WORKSPACE}" -out=tfplan
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ github.sha }}
+          path: terraform/tfplan
+          retention-days: 7
+
+      - name: Terraform Apply
+        id: apply
+        working-directory: ./terraform
+        run: terraform apply -auto-approve tfplan
+
+      # 📤 Capture Terraform Outputs for Ansible
+      - name: Capture Terraform Outputs
+        id: tf_outputs
+        working-directory: ./terraform
+        run: |
+          JENKINS_IP=$(terraform output -raw jenkins_public_ip)
+          JENKINS_INSTANCE_ID=$(terraform output -raw jenkins_instance_id)
+          echo "jenkins_ip=${JENKINS_IP}" >> $GITHUB_OUTPUT
+          echo "jenkins_instance_id=${JENKINS_INSTANCE_ID}" >> $GITHUB_OUTPUT
+          echo "📍 Jenkins Server IP: ${JENKINS_IP}"
+          echo "🆔 Jenkins Instance ID: ${JENKINS_INSTANCE_ID}"
+
+      # 💾 Save Outputs as Artifact for Ansible Workflow
+      - name: Save Jenkins IP to Artifact
+        run: |
+          mkdir -p outputs
+          echo "${{ steps.tf_outputs.outputs.jenkins_ip }}" > outputs/jenkins_ip.txt
+          echo "${{ steps.tf_outputs.outputs.jenkins_instance_id }}" > outputs/jenkins_instance_id.txt
+
+      - name: Upload Terraform Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ github.sha }}
+          path: outputs/
+          retention-days: 7
+
+      # 📊 Display Summary
+      - name: Deployment Summary
+        run: |
+          echo "## 🚀 Infrastructure Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${TF_WORKSPACE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Jenkins IP**: ${{ steps.tf_outputs.outputs.jenkins_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance ID**: ${{ steps.tf_outputs.outputs.jenkins_instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⏭️ Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Wait for the Ansible deployment workflow to run" >> $GITHUB_STEP_SUMMARY
+          echo "2. Access Jenkins at: http://${{ steps.tf_outputs.outputs.jenkins_ip }}:8080" >> $GITHUB_STEP_SUMMARY

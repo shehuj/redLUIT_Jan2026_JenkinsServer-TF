@@ -92,6 +92,85 @@ graph LR
 
 See **[WORKFLOWS.md](WORKFLOWS.md)** for detailed workflow documentation.
 
+## 🔄 Automated Deployment Flow
+
+This project features a **fully automated deployment pipeline** that dynamically integrates Terraform and Ansible:
+
+### How It Works
+
+1. **Terraform Deploy** (`.github/workflows/infra-deploy.yml`)
+   - Provisions AWS infrastructure (VPC, EC2, Security Groups, etc.)
+   - Captures Jenkins public IP from Terraform outputs
+   - Saves outputs as GitHub artifacts
+   - Displays deployment summary with Jenkins URL
+
+2. **Ansible Deploy** (`.github/workflows/ansible-deploy.yml`)
+   - Automatically triggers after Terraform deployment completes
+   - Dynamically fetches Jenkins IP from Terraform state (no hardcoded IPs!)
+   - Generates Ansible inventory at runtime
+   - Configures Jenkins with Ansible playbooks
+   - Retrieves and displays initial admin password
+
+### Workflow Integration
+
+```mermaid
+graph TD
+    A[Push to main] --> B[Terraform Deploy]
+    B --> C[Provision Infrastructure]
+    C --> D[Capture Jenkins IP]
+    D --> E[Save Outputs]
+    E --> F[Ansible Deploy Triggered]
+    F --> G[Fetch Jenkins IP from Terraform]
+    G --> H[Generate Dynamic Inventory]
+    H --> I[Run Ansible Playbooks]
+    I --> J[Retrieve Admin Password]
+    J --> K[Display Access Info]
+```
+
+### Local Development with Dynamic IP
+
+For local testing, use the provided `ansible-run.sh` wrapper script:
+
+```bash
+# Run Ansible ping test
+./ansible-run.sh -m ping
+
+# Run Ansible playbook
+./ansible-run.sh --playbook ansible/playbooks/deploy_jenkins.yml
+
+# Run ad-hoc command with verbose output
+./ansible-run.sh -m shell -a "uptime" -v
+
+# Use custom SSH key
+SSH_KEY_PATH=~/.ssh/my-key.pem ./ansible-run.sh -m ping
+```
+
+The script automatically:
+- Fetches the current Jenkins IP from Terraform state
+- Generates the Ansible inventory dynamically
+- Runs your Ansible command with the correct configuration
+
+**Benefits:**
+- No manual IP updates needed
+- Works seamlessly after Terraform apply
+- Single source of truth (Terraform state)
+- Eliminates configuration drift
+
+### Required GitHub Secrets
+
+For the automated workflows to function, configure these secrets in your repository:
+
+| Secret | Description |
+|--------|-------------|
+| `AWS_ACCESS_KEY_ID` | AWS credentials for Terraform/Ansible |
+| `AWS_SECRET_ACCESS_KEY` | AWS credentials for Terraform/Ansible |
+| `AWS_REGION` | AWS region (e.g., `us-east-1`) |
+| `TF_BACKEND_BUCKET` | S3 bucket for Terraform state |
+| `TF_DYNAMODB_TABLE` | DynamoDB table for state locking |
+| `SSH_PRIVATE_KEY` | SSH private key for EC2 access |
+
+**Note:** `JENKINS_HOST_IP` secret is no longer needed - the IP is fetched dynamically!
+
 ## Overview
 
 This Terraform project provisions a complete Jenkins infrastructure on AWS, including:

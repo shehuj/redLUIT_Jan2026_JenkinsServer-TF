@@ -1,8 +1,55 @@
 ---
-- name: Deploy Jenkins CI/CD Server
-  hosts: all
-  become: true
+- name: Install and configure Jenkins
+  hosts: jenkins
   gather_facts: true
+  become: true
 
-  roles:
-    - jenkins
+  vars:
+    jenkins_port: 8080
+
+  tasks:
+    - name: Install Java (prerequisite)
+      apt:
+        name: openjdk-11-jdk
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Add Jenkins apt key
+      apt_key:
+        url: https://pkg.jenkins.io/debian-stable/jenkins.io.key
+        state: present
+
+    - name: Add Jenkins repository
+      apt_repository:
+        repo: "deb https://pkg.jenkins.io/debian-stable binary/"
+        state: present
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install Jenkins
+      apt:
+        name: jenkins
+        state: present
+
+    - name: Start and enable Jenkins service
+      service:
+        name: jenkins
+        state: started
+        enabled: true
+
+    - name: Wait until Jenkins is accessible
+      wait_for:
+        host: "{{ inventory_hostname }}"
+        port: "{{ jenkins_port }}"
+        timeout: 120
+
+    - name: Read initial admin password
+      command: cat /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_password
+      changed_when: false
+
+    - name: Print Jenkins admin password
+      debug:
+        msg: "Jenkins admin initial password: {{ jenkins_password.stdout }}"
