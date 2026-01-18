@@ -1,34 +1,34 @@
 ---
 - name: Install Java OpenJDK 11
-  shell: |
+  ansible.builtin.shell: |
     amazon-linux-extras install java-openjdk11 -y
   args:
     creates: /usr/bin/java
 
 - name: Download Jenkins repository
-  get_url:
+  ansible.builtin.get_url:
     url: https://pkg.jenkins.io/redhat-stable/jenkins.repo
     dest: /etc/yum.repos.d/jenkins.repo
     mode: '0644'
 
 - name: Import Jenkins GPG key
-  rpm_key:
+  ansible.builtin.rpm_key:
     state: present
     key: https://pkg.jenkins.io/redhat-stable/jenkins.io.key
 
 - name: Install Jenkins
-  yum:
+  ansible.builtin.yum:
     name: jenkins
     state: present
 
 - name: Enable and start Jenkins service
-  systemd:
+  ansible.builtin.systemd:
     name: jenkins
-    enabled: yes
+    enabled: true
     state: started
 
 - name: Wait for Jenkins to start
-  wait_for:
+  ansible.builtin.wait_for:
     port: 8080
     delay: 10
     timeout: 300

@@ -1,6 +1,6 @@
 ---
 - name: Include installation tasks
-  include_tasks: install.yml
+  ansible.builtin.include_tasks: install.yml
 
 - name: Include password retrieval tasks
-  include_tasks: retrieve_password.yml
+  ansible.builtin.include_tasks: retrieve_password.yml
