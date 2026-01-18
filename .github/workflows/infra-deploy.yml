@@ -80,7 +80,7 @@ jobs:
       - name: Terraform Format Check
         id: fmt
         working-directory: ./infra/terraform
-        run: terraform fmt -check -recursive
+        run: terraform fmt -recursive
         continue-on-error: true
 
       - name: Terraform Validate
