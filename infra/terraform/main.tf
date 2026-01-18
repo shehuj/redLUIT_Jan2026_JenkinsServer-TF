@@ -27,10 +27,11 @@ module "web_sg" {
 }
 
 module "web_ec2" {
-  source          = "./modules/ec2"
-  ami             = var.ec2_ami
-  instance_type   = var.ec2_instance_type
-  subnet_id       = element(module.vpc.public_subnet_ids, 0)
+  source             = "./modules/ec2"
+  ami                = var.ec2_ami
+  instance_type      = var.ec2_instance_type
+  subnet_id          = element(module.vpc.public_subnet_ids, 0)
   security_group_ids = [module.web_sg.sg_id]
-  tags             = var.common_tags
+  key_name           = var.ssh_key_name
+  tags               = var.common_tags
 }
