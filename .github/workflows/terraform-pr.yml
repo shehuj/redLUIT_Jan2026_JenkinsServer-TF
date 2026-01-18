@@ -163,7 +163,7 @@ ${planTxt.length > 60000 ? planTxt.substring(0, 60000) + '\n\n... (plan truncate
           directory: terraform
           framework: terraform
           output_format: sarif
-          output_file_path: results.sarif
+          output_file_path: checkov-results.sarif
           soft_fail: true
           quiet: false
           download_external_modules: true

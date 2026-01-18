@@ -1,0 +1,358 @@
+name: Terraform Destroy - Resource Cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type "DESTROY" to confirm resource deletion'
+        required: true
+        type: string
+      reason:
+        description: 'Reason for destroying infrastructure'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_LOG: WARN
+  TF_IN_AUTOMATION: true
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+  validate-input:
+    name: 'Validate Confirmation'
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+
+    steps:
+      - name: Validate Destroy Confirmation
+        id: check
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "DESTROY" ]; then
+            echo "❌ Invalid confirmation. You must type exactly 'DESTROY' to proceed."
+            echo "You entered: ${{ github.event.inputs.confirmation }}"
+            exit 1
+          fi
+          echo "✅ Confirmation validated"
+          echo "proceed=true" >> $GITHUB_OUTPUT
+
+      - name: Log Destruction Request
+        run: |
+          echo "## 🚨 DESTRUCTION REQUEST LOGGED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Requested by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "**Reason:** ${{ github.event.inputs.reason }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** Proceeding with infrastructure destruction..." >> $GITHUB_STEP_SUMMARY
+
+  pre-destroy-inventory:
+    name: 'Pre-Destroy Inventory'
+    runs-on: ubuntu-latest
+    needs: validate-input
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        id: init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Show Current Resources
+        id: show
+        working-directory: ./terraform
+        run: |
+          echo "## 📋 Current Infrastructure Inventory" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          terraform show -no-color 2>&1 | head -100 >> $GITHUB_STEP_SUMMARY || echo "No state found or error reading state" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: List AWS Resources
+        run: |
+          echo "## 🔍 AWS Resources to be Destroyed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # List EC2 instances
+          echo "### EC2 Instances" >> $GITHUB_STEP_SUMMARY
+          aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=JenkinsServer" "Name=instance-state-name,Values=running,stopped" \
+            --query 'Reservations[*].Instances[*].[InstanceId,PublicIpAddress,State.Name,Tags[?Key==`Name`].Value|[0]]' \
+            --output table >> $GITHUB_STEP_SUMMARY 2>&1 || echo "No EC2 instances found" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # List S3 buckets
+          echo "### S3 Buckets" >> $GITHUB_STEP_SUMMARY
+          aws s3 ls | grep jenkins || echo "No Jenkins S3 buckets found" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # List VPCs
+          echo "### VPCs" >> $GITHUB_STEP_SUMMARY
+          aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=jenkins-vpc" \
+            --query 'Vpcs[*].[VpcId,CidrBlock,Tags[?Key==`Name`].Value|[0]]' \
+            --output table >> $GITHUB_STEP_SUMMARY 2>&1 || echo "No VPCs found" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+  destroy:
+    name: 'Destroy Infrastructure'
+    runs-on: ubuntu-latest
+    needs: [validate-input, pre-destroy-inventory]
+    environment:
+      name: production
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        id: init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Terraform Destroy Plan
+        id: plan
+        working-directory: ./terraform
+        run: |
+          terraform plan -destroy -out=destroy.tfplan 2>&1 | tee destroy_plan.txt
+          echo "exitcode=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Show Destroy Plan Summary
+        working-directory: ./terraform
+        run: |
+          echo "## 🗑️ Terraform Destroy Plan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details><summary>Click to view destroy plan</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`terraform" >> $GITHUB_STEP_SUMMARY
+          cat destroy_plan.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Destroy Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: destroy-plan-${{ github.sha }}
+          path: terraform/destroy.tfplan
+          retention-days: 7
+
+      - name: Clean S3 Buckets
+        id: clean_s3
+        run: |
+          echo "## 🧹 Cleaning S3 Buckets" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Find all S3 buckets with jenkins in the name
+          BUCKETS=$(aws s3 ls | grep jenkins | awk '{print $3}' || true)
+
+          if [ -z "$BUCKETS" ]; then
+            echo "No S3 buckets found with 'jenkins' in the name" >> $GITHUB_STEP_SUMMARY
+          else
+            for BUCKET in $BUCKETS; do
+              echo "Emptying bucket: $BUCKET" >> $GITHUB_STEP_SUMMARY
+              aws s3 rm s3://$BUCKET --recursive || echo "Failed to empty $BUCKET" >> $GITHUB_STEP_SUMMARY
+
+              # Delete all versions if versioning is enabled
+              aws s3api delete-objects --bucket $BUCKET \
+                --delete "$(aws s3api list-object-versions --bucket $BUCKET \
+                --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json)" \
+                2>/dev/null || echo "No versions to delete in $BUCKET"
+
+              # Delete all delete markers
+              aws s3api delete-objects --bucket $BUCKET \
+                --delete "$(aws s3api list-object-versions --bucket $BUCKET \
+                --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json)" \
+                2>/dev/null || echo "No delete markers in $BUCKET"
+            done
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ S3 buckets emptied successfully" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: Terraform Destroy
+        id: destroy
+        working-directory: ./terraform
+        run: |
+          echo "Starting Terraform destroy..."
+          terraform destroy -auto-approve 2>&1 | tee destroy_output.txt
+          DESTROY_EXIT_CODE=${PIPESTATUS[0]}
+
+          echo "Terraform destroy completed with exit code: $DESTROY_EXIT_CODE"
+          echo "exitcode=$DESTROY_EXIT_CODE" >> $GITHUB_OUTPUT
+
+          exit $DESTROY_EXIT_CODE
+
+      - name: Verify Cleanup
+        id: verify
+        if: always()
+        run: |
+          echo "## 🔍 Post-Destroy Verification" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check for remaining EC2 instances
+          echo "### EC2 Instances" >> $GITHUB_STEP_SUMMARY
+          INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=JenkinsServer" "Name=instance-state-name,Values=running,stopped,stopping" \
+            --query 'Reservations[*].Instances[*].InstanceId' \
+            --output text)
+
+          if [ -z "$INSTANCES" ]; then
+            echo "✅ No EC2 instances remaining" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Found remaining instances: $INSTANCES" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check for remaining VPCs
+          echo "### VPCs" >> $GITHUB_STEP_SUMMARY
+          VPCS=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=jenkins-vpc" \
+            --query 'Vpcs[*].VpcId' \
+            --output text)
+
+          if [ -z "$VPCS" ]; then
+            echo "✅ No VPCs remaining" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Found remaining VPCs: $VPCS" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check for remaining S3 buckets
+          echo "### S3 Buckets" >> $GITHUB_STEP_SUMMARY
+          S3_BUCKETS=$(aws s3 ls | grep jenkins | awk '{print $3}' || true)
+
+          if [ -z "$S3_BUCKETS" ]; then
+            echo "✅ No S3 buckets remaining" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Found remaining buckets: $S3_BUCKETS" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: Generate Final Summary
+        if: always()
+        run: |
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Destruction Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ steps.destroy.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Requested by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Reason:** ${{ github.event.inputs.reason }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Completed at:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.destroy.outcome }}" == "success" ]; then
+            echo "### ✅ Infrastructure Successfully Destroyed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "All Terraform-managed resources have been removed from AWS." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Destruction Failed or Incomplete" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Some resources may not have been destroyed. Please review the logs and verify manually." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔐 State Management" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The Terraform state file remains in the S3 backend." >> $GITHUB_STEP_SUMMARY
+          echo "If you want to completely clean up:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Manually delete the state file from S3" >> $GITHUB_STEP_SUMMARY
+          echo "2. Delete the DynamoDB lock table (if exists)" >> $GITHUB_STEP_SUMMARY
+          echo "3. Delete the S3 backend bucket (if no longer needed)" >> $GITHUB_STEP_SUMMARY
+
+  cleanup-orphaned-resources:
+    name: 'Cleanup Orphaned Resources'
+    runs-on: ubuntu-latest
+    needs: destroy
+    if: always()
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Find and Clean Orphaned Resources
+        run: |
+          echo "## 🧹 Orphaned Resources Cleanup" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Clean up any orphaned network interfaces
+          echo "### Network Interfaces" >> $GITHUB_STEP_SUMMARY
+          aws ec2 describe-network-interfaces \
+            --filters "Name=description,Values=*jenkins*" \
+            --query 'NetworkInterfaces[?Status==`available`].[NetworkInterfaceId]' \
+            --output text | while read -r eni; do
+              if [ ! -z "$eni" ]; then
+                echo "Deleting orphaned ENI: $eni" >> $GITHUB_STEP_SUMMARY
+                aws ec2 delete-network-interface --network-interface-id $eni || echo "Failed to delete $eni" >> $GITHUB_STEP_SUMMARY
+              fi
+          done || echo "No orphaned network interfaces found" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Clean up any orphaned security groups
+          echo "### Security Groups" >> $GITHUB_STEP_SUMMARY
+          aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=*jenkins*" \
+            --query 'SecurityGroups[?GroupName!=`default`].[GroupId,GroupName]' \
+            --output text | while read -r sg_id sg_name; do
+              if [ ! -z "$sg_id" ] && [ "$sg_name" != "default" ]; then
+                echo "Attempting to delete security group: $sg_id ($sg_name)" >> $GITHUB_STEP_SUMMARY
+                aws ec2 delete-security-group --group-id $sg_id 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "Could not delete $sg_id (may be in use)" >> $GITHUB_STEP_SUMMARY
+              fi
+          done || echo "No orphaned security groups found" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Clean up any orphaned EBS volumes
+          echo "### EBS Volumes" >> $GITHUB_STEP_SUMMARY
+          aws ec2 describe-volumes \
+            --filters "Name=status,Values=available" "Name=tag:Name,Values=*jenkins*" \
+            --query 'Volumes[*].[VolumeId]' \
+            --output text | while read -r vol; do
+              if [ ! -z "$vol" ]; then
+                echo "Deleting orphaned volume: $vol" >> $GITHUB_STEP_SUMMARY
+                aws ec2 delete-volume --volume-id $vol || echo "Failed to delete $vol" >> $GITHUB_STEP_SUMMARY
+              fi
+          done || echo "No orphaned EBS volumes found" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "✅ Orphaned resources cleanup completed" >> $GITHUB_STEP_SUMMARY
