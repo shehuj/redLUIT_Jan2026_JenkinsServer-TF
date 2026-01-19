@@ -1,5 +1,4 @@
-name: Ansible Configuration
-
+name: Ansible Configuration and Jenkins Deployment
 on:
 
   push:
@@ -21,8 +20,6 @@ jobs:
   check-infrastructure:
     name: Validate Infrastructure
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-
     steps:
       - name: Validation Start
         run: |
