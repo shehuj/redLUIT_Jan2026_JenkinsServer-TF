@@ -66,6 +66,7 @@ jobs:
         JENKINS_PUBLIC_IP=$(terraform output -raw jenkins_public_ip 2>/dev/null || echo "")
         JENKINS_PRIVATE_IP=$(terraform output -raw jenkins_private_ip 2>/dev/null || echo "")
         JENKINS_INSTANCE_ID=$(terraform output -raw jenkins_instance_id 2>/dev/null || echo "")
+        ARTIFACTS_BUCKET=$(terraform output -raw jenkins_artifacts_bucket_name 2>/dev/null || echo "")
 
         # Validate outputs
         if [[ -z "${JENKINS_PUBLIC_IP}" ]] || [[ -z "${JENKINS_INSTANCE_ID}" ]]; then
@@ -73,6 +74,7 @@ jobs:
           echo "Public IP: '${JENKINS_PUBLIC_IP}'"
           echo "Private IP: '${JENKINS_PRIVATE_IP}'"
           echo "Instance ID: '${JENKINS_INSTANCE_ID}'"
+          echo "Artifacts Bucket: '${ARTIFACTS_BUCKET}'"
           terraform output
           exit 1
         fi
@@ -92,10 +94,12 @@ jobs:
         echo "jenkins_public_ip=${JENKINS_PUBLIC_IP}" >> $GITHUB_OUTPUT
         echo "jenkins_private_ip=${JENKINS_PRIVATE_IP}" >> $GITHUB_OUTPUT
         echo "jenkins_instance_id=${JENKINS_INSTANCE_ID}" >> $GITHUB_OUTPUT
+        echo "artifacts_bucket=${ARTIFACTS_BUCKET}" >> $GITHUB_OUTPUT
 
         echo "📍 Jenkins Public IP: ${JENKINS_PUBLIC_IP}"
         echo "🔒 Jenkins Private IP: ${JENKINS_PRIVATE_IP}"
         echo "🆔 Jenkins Instance ID: ${JENKINS_INSTANCE_ID}"
+        echo "🪣 Artifacts Bucket: ${ARTIFACTS_BUCKET}"
 
     - name: Save Jenkins Connection Info
       run: |
@@ -103,6 +107,7 @@ jobs:
         echo "${{ steps.tf_outputs.outputs.jenkins_public_ip }}" > outputs/jenkins_public_ip.txt
         echo "${{ steps.tf_outputs.outputs.jenkins_private_ip }}" > outputs/jenkins_private_ip.txt
         echo "${{ steps.tf_outputs.outputs.jenkins_instance_id }}" > outputs/jenkins_instance_id.txt
+        echo "${{ steps.tf_outputs.outputs.artifacts_bucket }}" > outputs/jenkins_artifacts_bucket.txt
 
     - name: Upload Terraform Outputs
       uses: actions/upload-artifact@v4
@@ -119,12 +124,22 @@ jobs:
         echo "- **Public IP**: ${{ steps.tf_outputs.outputs.jenkins_public_ip }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Private IP**: ${{ steps.tf_outputs.outputs.jenkins_private_ip }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Instance ID**: ${{ steps.tf_outputs.outputs.jenkins_instance_id }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Artifacts Bucket**: \`${{ steps.tf_outputs.outputs.artifacts_bucket }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 🌐 Access Information" >> $GITHUB_STEP_SUMMARY
         echo "- **Jenkins URL**: http://${{ steps.tf_outputs.outputs.jenkins_public_ip }}:8080" >> $GITHUB_STEP_SUMMARY
         echo "- **SSH Command**: \`ssh -i ~/.ssh/key.pem ubuntu@${{ steps.tf_outputs.outputs.jenkins_public_ip }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🪣 S3 Artifacts Bucket" >> $GITHUB_STEP_SUMMARY
+        echo "- **Bucket Name**: \`${{ steps.tf_outputs.outputs.artifacts_bucket }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Access**: Private (blocked from public access)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Encryption**: AES256 server-side encryption enabled" >> $GITHUB_STEP_SUMMARY
+        echo "- **Versioning**: Enabled" >> $GITHUB_STEP_SUMMARY
+        echo "- **Lifecycle**: Artifacts deleted after 180 days, old versions after 90 days" >> $GITHUB_STEP_SUMMARY
+        echo "- **IAM Role**: Jenkins EC2 instance has read/write access via IAM instance profile" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
         echo "### ⏭️ Next Steps" >> $GITHUB_STEP_SUMMARY
         echo "1. Merge this PR to main to trigger Ansible configuration" >> $GITHUB_STEP_SUMMARY
         echo "2. Jenkins will be automatically configured via Ansible" >> $GITHUB_STEP_SUMMARY
         echo "3. Access Jenkins at the URL above after configuration completes" >> $GITHUB_STEP_SUMMARY
+        echo "4. Configure Jenkins to use S3 bucket \`${{ steps.tf_outputs.outputs.artifacts_bucket }}\` for artifact storage" >> $GITHUB_STEP_SUMMARY

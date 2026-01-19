@@ -21,3 +21,9 @@ variable "ssh_allowed_cidrs" {
   type        = list(string)
   default     = ["0.0.0.0/0"]  # WARNING: Open to all IPs. Restrict in production.
 }
+
+variable "artifacts_bucket_name" {
+  description = "Name of the S3 bucket for Jenkins artifacts (must be globally unique)"
+  type        = string
+  default     = "jenkinsproject-artifacts-bucket"
+}
