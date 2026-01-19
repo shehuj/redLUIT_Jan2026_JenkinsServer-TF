@@ -129,17 +129,45 @@ jobs:
         run: |
           PASSWORD=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/key.pem ubuntu@${{ env.JENKINS_PUBLIC_IP }} \
             'sudo cat /var/lib/jenkins/secrets/initialAdminPassword' 2>/dev/null || echo "N/A")
+
+          # Display password in workflow logs
+          echo "========================================"
+          echo "Jenkins Initial Admin Password:"
+          echo "$PASSWORD"
+          echo "========================================"
+
+          # Save to output (GitHub may mask this)
           echo "password=$PASSWORD" >> $GITHUB_OUTPUT
+
+          # Also save to file for artifact upload
+          mkdir -p jenkins_credentials
+          echo "$PASSWORD" > jenkins_credentials/initial_password.txt
+          echo "${{ env.JENKINS_PUBLIC_IP }}" > jenkins_credentials/jenkins_ip.txt
+
+      - name: Upload Jenkins Credentials
+        uses: actions/upload-artifact@v4
+        with:
+          name: jenkins-credentials-${{ github.sha }}
+          path: jenkins_credentials/
+          retention-days: 7
 
       - name: Deployment Summary
         run: |
+          PASSWORD=$(cat jenkins_credentials/initial_password.txt)
+
           echo "## ✅ Jenkins Configuration Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔐 Access Information" >> $GITHUB_STEP_SUMMARY
           echo "- **Jenkins URL**: http://${{ env.JENKINS_PUBLIC_IP }}:8080" >> $GITHUB_STEP_SUMMARY
           echo "- **Public IP**: ${{ env.JENKINS_PUBLIC_IP }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Private IP**: ${{ steps.get_ip.outputs.jenkins_private_ip }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Initial Admin Password**: \`${{ steps.get_password.outputs.password }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔑 Initial Admin Password" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "$PASSWORD" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> ⚠️ **Note**: This password is also available as a workflow artifact named \`jenkins-credentials-${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📝 Next Steps" >> $GITHUB_STEP_SUMMARY
           echo "1. Navigate to the Jenkins URL above" >> $GITHUB_STEP_SUMMARY
@@ -148,10 +176,18 @@ jobs:
 
       - name: Print Jenkins Access Info
         run: |
-          echo "======================================"
+          PASSWORD=$(cat jenkins_credentials/initial_password.txt)
+
+          echo "=============================================="
           echo "🎉 Jenkins Configuration Successful!"
-          echo "======================================"
+          echo "=============================================="
+          echo ""
           echo "Jenkins URL: http://${{ env.JENKINS_PUBLIC_IP }}:8080"
-          echo "Initial Admin Password: ${{ steps.get_password.outputs.password }}"
-          echo "SSH: ssh -i ~/.ssh/key.pem ubuntu@${{ env.JENKINS_PUBLIC_IP }}"
-          echo "======================================"
+          echo ""
+          echo "Initial Admin Password:"
+          echo "$PASSWORD"
+          echo ""
+          echo "SSH Command:"
+          echo "ssh -i ~/.ssh/key.pem ubuntu@${{ env.JENKINS_PUBLIC_IP }}"
+          echo ""
+          echo "=============================================="
