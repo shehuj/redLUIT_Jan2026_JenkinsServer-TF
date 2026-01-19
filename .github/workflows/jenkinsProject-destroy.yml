@@ -165,12 +165,79 @@ jobs:
           echo "Starting Terraform destroy for jenkinsProject..."
           terraform destroy -auto-approve
 
-      - name: Verify Destruction
+      - name: Cleanup Orphaned Resources
+        run: |
+          echo "## 🧹 Cleaning Up Orphaned Resources" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Clean up orphaned IAM roles
+          echo "### IAM Roles" >> $GITHUB_STEP_SUMMARY
+          IAM_ROLE="jenkins-ec2-role"
+          if aws iam get-role --role-name "$IAM_ROLE" 2>/dev/null; then
+            echo "Found orphaned IAM role: $IAM_ROLE" >> $GITHUB_STEP_SUMMARY
+
+            # Detach all policies
+            aws iam list-attached-role-policies --role-name "$IAM_ROLE" --query 'AttachedPolicies[].PolicyArn' --output text | while read policy_arn; do
+              if [ ! -z "$policy_arn" ]; then
+                echo "Detaching policy: $policy_arn" >> $GITHUB_STEP_SUMMARY
+                aws iam detach-role-policy --role-name "$IAM_ROLE" --policy-arn "$policy_arn" || true
+              fi
+            done
+
+            # Delete inline policies
+            aws iam list-role-policies --role-name "$IAM_ROLE" --query 'PolicyNames[]' --output text | while read policy_name; do
+              if [ ! -z "$policy_name" ]; then
+                echo "Deleting inline policy: $policy_name" >> $GITHUB_STEP_SUMMARY
+                aws iam delete-role-policy --role-name "$IAM_ROLE" --policy-name "$policy_name" || true
+              fi
+            done
+
+            # Delete instance profiles
+            aws iam list-instance-profiles-for-role --role-name "$IAM_ROLE" --query 'InstanceProfiles[].InstanceProfileName' --output text | while read profile_name; do
+              if [ ! -z "$profile_name" ]; then
+                echo "Removing role from instance profile: $profile_name" >> $GITHUB_STEP_SUMMARY
+                aws iam remove-role-from-instance-profile --instance-profile-name "$profile_name" --role-name "$IAM_ROLE" || true
+                echo "Deleting instance profile: $profile_name" >> $GITHUB_STEP_SUMMARY
+                aws iam delete-instance-profile --instance-profile-name "$profile_name" || true
+              fi
+            done
+
+            # Delete role
+            echo "Deleting IAM role: $IAM_ROLE" >> $GITHUB_STEP_SUMMARY
+            aws iam delete-role --role-name "$IAM_ROLE" || true
+            echo "✅ IAM role cleaned up" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ No orphaned IAM roles found" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Clean up orphaned S3 buckets
+          echo "### S3 Buckets" >> $GITHUB_STEP_SUMMARY
+          BUCKET_PREFIX="jenkinsproject-artifacts"
+          ORPHANED_BUCKETS=$(aws s3api list-buckets --query "Buckets[?starts_with(Name, '$BUCKET_PREFIX')].Name" --output text)
+
+          if [ ! -z "$ORPHANED_BUCKETS" ]; then
+            for bucket in $ORPHANED_BUCKETS; do
+              echo "Found orphaned bucket: $bucket" >> $GITHUB_STEP_SUMMARY
+
+              # Try to empty and delete
+              aws s3 rm "s3://$bucket" --recursive 2>/dev/null || true
+              aws s3api delete-bucket --bucket "$bucket" 2>/dev/null || echo "Could not delete $bucket (may have versioning)" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "✅ No orphaned S3 buckets found" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: Verify Complete Destruction
         run: |
           echo "## 🔍 Post-Destroy Verification" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          ALL_CLEAN=true
+
           # Check for remaining EC2 instances
+          echo "### EC2 Instances" >> $GITHUB_STEP_SUMMARY
           INSTANCES=$(aws ec2 describe-instances \
             --filters "Name=tag:Project,Values=JenkinsProject" "Name=instance-state-name,Values=running,stopped,stopping,pending" \
             --query 'Reservations[*].Instances[*].InstanceId' \
@@ -180,9 +247,12 @@ jobs:
             echo "✅ No EC2 instances remaining" >> $GITHUB_STEP_SUMMARY
           else
             echo "⚠️  Found remaining instances: $INSTANCES" >> $GITHUB_STEP_SUMMARY
+            ALL_CLEAN=false
           fi
+          echo "" >> $GITHUB_STEP_SUMMARY
 
           # Check for remaining security groups
+          echo "### Security Groups" >> $GITHUB_STEP_SUMMARY
           SGS=$(aws ec2 describe-security-groups \
             --filters "Name=tag:Project,Values=JenkinsProject" \
             --query 'SecurityGroups[*].GroupId' \
@@ -192,13 +262,50 @@ jobs:
             echo "✅ No security groups remaining" >> $GITHUB_STEP_SUMMARY
           else
             echo "⚠️  Found remaining security groups: $SGS" >> $GITHUB_STEP_SUMMARY
+            ALL_CLEAN=false
           fi
-
           echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check for remaining S3 buckets
+          echo "### S3 Buckets" >> $GITHUB_STEP_SUMMARY
+          BUCKETS=$(aws s3api list-buckets --query "Buckets[?starts_with(Name, 'jenkinsproject-artifacts')].Name" --output text)
+
+          if [ -z "$BUCKETS" ]; then
+            echo "✅ No S3 buckets remaining" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️  Found remaining buckets: $BUCKETS" >> $GITHUB_STEP_SUMMARY
+            ALL_CLEAN=false
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check for remaining IAM roles
+          echo "### IAM Roles" >> $GITHUB_STEP_SUMMARY
+          if aws iam get-role --role-name jenkins-ec2-role 2>/dev/null; then
+            echo "⚠️  Found remaining IAM role: jenkins-ec2-role" >> $GITHUB_STEP_SUMMARY
+            ALL_CLEAN=false
+          else
+            echo "✅ No IAM roles remaining" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Final summary
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## ✅ JenkinsProject Infrastructure Destroyed" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$ALL_CLEAN" = true ]; then
+            echo "## ✅ JenkinsProject Infrastructure Completely Destroyed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⚠️ JenkinsProject Infrastructure Destroyed (Some Resources Remain)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Some resources could not be automatically deleted. Please review the verification above." >> $GITHUB_STEP_SUMMARY
+          fi
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Requested by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "**Reason:** ${{ github.event.inputs.reason }}" >> $GITHUB_STEP_SUMMARY
           echo "**Completed at:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Notes" >> $GITHUB_STEP_SUMMARY
+          echo "- Terraform state file remains in S3 backend" >> $GITHUB_STEP_SUMMARY
+          echo "- To remove state: Delete \`jenkinsProject/terraform.tfstate\` from backend bucket" >> $GITHUB_STEP_SUMMARY
+          echo "- Backend infrastructure (S3 bucket, DynamoDB table) is NOT destroyed" >> $GITHUB_STEP_SUMMARY

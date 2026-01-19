@@ -21,6 +21,11 @@ data "aws_ami" "ubuntu" {
   }
 }
 
+# Lookup the existing instance profile
+data "aws_iam_instance_profile" "existing_demo_ssm" {
+  name = "DemoSSMEc2Role"
+}
+
 # Get default VPC
 data "aws_vpc" "default" {
   default = true
@@ -37,7 +42,6 @@ resource "aws_s3_bucket" "jenkins_artifacts" {
   }
 }
 
-# Block all public access to the bucket
 resource "aws_s3_bucket_public_access_block" "jenkins_artifacts" {
   bucket = aws_s3_bucket.jenkins_artifacts.id
 
@@ -47,7 +51,6 @@ resource "aws_s3_bucket_public_access_block" "jenkins_artifacts" {
   restrict_public_buckets = true
 }
 
-# Enable versioning for artifact history
 resource "aws_s3_bucket_versioning" "jenkins_artifacts" {
   bucket = aws_s3_bucket.jenkins_artifacts.id
 
@@ -56,7 +59,6 @@ resource "aws_s3_bucket_versioning" "jenkins_artifacts" {
   }
 }
 
-# Enable server-side encryption
 resource "aws_s3_bucket_server_side_encryption_configuration" "jenkins_artifacts" {
   bucket = aws_s3_bucket.jenkins_artifacts.id
 
@@ -68,7 +70,6 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "jenkins_artifacts
   }
 }
 
-# Lifecycle policy to manage old artifacts
 resource "aws_s3_bucket_lifecycle_configuration" "jenkins_artifacts" {
   bucket = aws_s3_bucket.jenkins_artifacts.id
 
@@ -86,7 +87,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "jenkins_artifacts" {
   }
 }
 
-# IAM role for Jenkins EC2 instance
+# IAM role for Jenkins EC2 instance (still created; can be used or ignored)
 resource "aws_iam_role" "jenkins" {
   name = "jenkins-ec2-role"
 
@@ -110,7 +111,6 @@ resource "aws_iam_role" "jenkins" {
   }
 }
 
-# IAM policy for S3 access
 resource "aws_iam_role_policy" "jenkins_s3_access" {
   name = "jenkins-s3-access"
   role = aws_iam_role.jenkins.id
@@ -135,13 +135,11 @@ resource "aws_iam_role_policy" "jenkins_s3_access" {
   })
 }
 
-# Attach AWS managed policy for SSM access
 resource "aws_iam_role_policy_attachment" "jenkins_ssm_policy" {
   role       = aws_iam_role.jenkins.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-# IAM instance profile for EC2
 resource "aws_iam_instance_profile" "jenkins" {
   name = "jenkins-instance-profile"
   role = aws_iam_role.jenkins.name
@@ -153,13 +151,11 @@ resource "aws_iam_instance_profile" "jenkins" {
   }
 }
 
-# Create security group for Jenkins
 resource "aws_security_group" "jenkins" {
   name        = "jenkinsProject-sg"
   description = "Security group for Jenkins server - jenkinsProject"
   vpc_id      = data.aws_vpc.default.id
 
-  # SSH access
   ingress {
     from_port   = 22
     to_port     = 22
@@ -168,7 +164,6 @@ resource "aws_security_group" "jenkins" {
     description = "Allow SSH from specified CIDR blocks"
   }
 
-  # Jenkins web UI
   ingress {
     from_port   = 8080
     to_port     = 8080
@@ -177,7 +172,6 @@ resource "aws_security_group" "jenkins" {
     description = "Allow Jenkins web interface"
   }
 
-  # HTTPS (for future use)
   ingress {
     from_port   = 443
     to_port     = 443
@@ -186,7 +180,6 @@ resource "aws_security_group" "jenkins" {
     description = "Allow HTTPS"
   }
 
-  # Allow all outbound traffic
   egress {
     from_port   = 0
     to_port     = 0
@@ -202,13 +195,14 @@ resource "aws_security_group" "jenkins" {
   }
 }
 
-# EC2 instance for Jenkins
 resource "aws_instance" "jenkins" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   vpc_security_group_ids = [aws_security_group.jenkins.id]
   key_name               = var.key_pair
-  iam_instance_profile   = aws_iam_instance_profile.jenkins.name
+
+  # assign the existing IAM instance profile
+  iam_instance_profile   = data.aws_iam_instance_profile.existing_demo_ssm.name
 
   associate_public_ip_address = true
 
@@ -233,7 +227,6 @@ resource "aws_instance" "jenkins" {
   }
 
   depends_on = [
-    aws_iam_instance_profile.jenkins,
     aws_iam_role_policy.jenkins_s3_access,
     aws_iam_role_policy_attachment.jenkins_ssm_policy
   ]
