@@ -226,8 +226,9 @@ jobs:
       - name: Set Terraform Workspace
         id: workspace
         run: |
-          # Main branch uses prod workspace
-          echo "workspace=prod" >> $GITHUB_OUTPUT
+          # Use dev workspace for now (can be changed to prod later)
+          # To use prod: change to 'prod' when ready for production
+          echo "workspace=dev" >> $GITHUB_OUTPUT
 
       - name: Terraform Init
         working-directory: ./infra/terraform
@@ -254,9 +255,27 @@ jobs:
         id: tf_outputs
         working-directory: ./infra/terraform
         run: |
+          # Debug: Show current workspace and state
+          echo "🔍 Current workspace: ${TF_WORKSPACE}"
+          echo "🔍 Available workspaces:"
+          terraform workspace list
+
+          echo ""
+          echo "🔍 Checking for Terraform outputs..."
+          terraform output -json 2>&1 | head -20
+
+          # Check if outputs exist
           if ! terraform output -json 2>&1 | grep -q '"jenkins_public_ip"'; then
-            echo "❌ No Terraform outputs found"
-            echo "Please ensure Terraform Deploy workflow ran successfully first"
+            echo ""
+            echo "❌ No Terraform outputs found in workspace: ${TF_WORKSPACE}"
+            echo ""
+            echo "Possible issues:"
+            echo "1. Infrastructure not deployed to this workspace yet"
+            echo "2. Terraform Deploy workflow failed"
+            echo "3. Wrong workspace selected"
+            echo ""
+            echo "Current workspace: ${TF_WORKSPACE}"
+            echo "Expected outputs: jenkins_public_ip, jenkins_private_ip, jenkins_instance_id"
             exit 1
           fi
 

@@ -29,9 +29,6 @@ jobs:
     name: 'Deploy Infrastructure'
     runs-on: ubuntu-latest
 
-    # Use environments if you have protections set (optional)
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -52,11 +49,9 @@ jobs:
       - name: Set Terraform Workspace
         id: workspace
         run: |
-          if [[ "${GITHUB_REF##*/}" == "main" ]]; then
-            echo "workspace=prod" >> $GITHUB_OUTPUT
-          else
-            echo "workspace=dev" >> $GITHUB_OUTPUT
-          fi
+          # Single workspace for all deployments
+          echo "workspace=dev" >> $GITHUB_OUTPUT
+          echo "Using workspace: dev"
 
       # 🧾 Initialize Terraform with Remote Backend + Workspace
       - name: Terraform Init
