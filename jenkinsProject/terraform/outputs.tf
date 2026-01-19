@@ -37,3 +37,8 @@ output "jenkins_iam_role_arn" {
   description = "The ARN of the IAM role attached to the Jenkins EC2 instance"
   value       = aws_iam_role.jenkins.arn
 }
+
+output "ssm_connection_command" {
+  description = "AWS Systems Manager Session Manager connection command"
+  value       = "aws ssm start-session --target ${aws_instance.jenkins.id}"
+}

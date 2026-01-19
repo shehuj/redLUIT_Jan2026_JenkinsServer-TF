@@ -135,6 +135,12 @@ resource "aws_iam_role_policy" "jenkins_s3_access" {
   })
 }
 
+# Attach AWS managed policy for SSM access
+resource "aws_iam_role_policy_attachment" "jenkins_ssm_policy" {
+  role       = aws_iam_role.jenkins.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 # IAM instance profile for EC2
 resource "aws_iam_instance_profile" "jenkins" {
   name = "jenkins-instance-profile"
@@ -228,6 +234,7 @@ resource "aws_instance" "jenkins" {
 
   depends_on = [
     aws_iam_instance_profile.jenkins,
-    aws_iam_role_policy.jenkins_s3_access
+    aws_iam_role_policy.jenkins_s3_access,
+    aws_iam_role_policy_attachment.jenkins_ssm_policy
   ]
 }

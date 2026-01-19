@@ -159,10 +159,50 @@ Or download from GitHub Actions artifacts after workflow run.
 http://<jenkins_public_ip>:8080
 ```
 
-### SSH Access
+### Server Access
+
+#### Option 1: AWS Systems Manager Session Manager (Recommended)
+
+**Why use SSM?**
+- No SSH port 22 required
+- Works even if your ISP blocks SSH
+- Uses HTTPS (port 443) - rarely blocked
+- Full audit logging in CloudTrail
+- No SSH keys needed
+
+**Prerequisites:**
+```bash
+# Install Session Manager plugin (one-time setup)
+# macOS with Homebrew:
+brew install --cask session-manager-plugin
+
+# Or download from:
+# https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html
+```
+
+**Connect to Jenkins server:**
+```bash
+aws ssm start-session --target <jenkins_instance_id>
+```
+
+**SSH over SSM (if you need key-based auth):**
+```bash
+# Start port forwarding
+aws ssm start-session \
+    --target <jenkins_instance_id> \
+    --document-name AWS-StartPortForwardingSession \
+    --parameters "portNumber=22,localPortNumber=2222"
+
+# In another terminal, connect via the tunnel
+ssh -i ~/.ssh/key.pem -p 2222 ubuntu@localhost
+```
+
+#### Option 2: Direct SSH Access
 ```bash
 ssh -i ~/.ssh/key.pem ubuntu@<jenkins_public_ip>
 ```
+
+**Note:** Requires port 22 to be accessible from your location. If your ISP/network blocks SSH, use SSM instead.
 
 ### Initial Admin Password
 Retrieved automatically during deployment and displayed in workflow output and artifacts.

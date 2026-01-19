@@ -128,7 +128,17 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 🌐 Access Information" >> $GITHUB_STEP_SUMMARY
         echo "- **Jenkins URL**: http://${{ steps.tf_outputs.outputs.jenkins_public_ip }}:8080" >> $GITHUB_STEP_SUMMARY
-        echo "- **SSH Command**: \`ssh -i ~/.ssh/key.pem ubuntu@${{ steps.tf_outputs.outputs.jenkins_public_ip }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔐 Server Access" >> $GITHUB_STEP_SUMMARY
+        echo "**Via AWS Systems Manager (Recommended - No SSH port needed):**" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+        echo "aws ssm start-session --target ${{ steps.tf_outputs.outputs.jenkins_instance_id }}" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Via SSH:**" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+        echo "ssh -i ~/.ssh/key.pem ubuntu@${{ steps.tf_outputs.outputs.jenkins_public_ip }}" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 🪣 S3 Artifacts Bucket" >> $GITHUB_STEP_SUMMARY
         echo "- **Bucket Name**: \`${{ steps.tf_outputs.outputs.artifacts_bucket }}\`" >> $GITHUB_STEP_SUMMARY
