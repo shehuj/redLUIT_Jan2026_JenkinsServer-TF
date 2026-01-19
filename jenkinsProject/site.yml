@@ -1,0 +1,16 @@
+---
+- hosts: jenkins
+  become: true
+
+  tasks:
+    - name: Copy install script
+      copy:
+        src: jenkins.sh
+        dest: /tmp/jenkins.sh
+        mode: "0755"
+
+    - name: Run Jenkins install script
+      shell: |
+        /tmp/jenkins.sh
+      args:
+        executable: /bin/bash
