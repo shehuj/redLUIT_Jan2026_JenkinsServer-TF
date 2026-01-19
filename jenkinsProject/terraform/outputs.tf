@@ -12,3 +12,13 @@ output "jenkins_instance_id" {
   description = "The ID of the Jenkins EC2 instance"
   value       = aws_instance.jenkins.id
 }
+
+output "jenkins_security_group_id" {
+  description = "The ID of the Jenkins security group"
+  value       = aws_security_group.jenkins.id
+}
+
+output "jenkins_public_dns" {
+  description = "The public DNS name of the Jenkins server"
+  value       = aws_instance.jenkins.public_dns
+}

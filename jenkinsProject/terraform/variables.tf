@@ -10,14 +10,14 @@ variable "instance_type" {
   default     = "m5.xlarge"
 }
 
-variable "jenkins_sg_id" {
-  description = "Security Group ID for Jenkins"
-  type        = string
-  default = "sg-0bfcde60ef49a5dcd"
-}
-
 variable "key_pair" {
   description = "EC2 SSH Key Pair"
   type        = string
   default     = "key"
+}
+
+variable "ssh_allowed_cidrs" {
+  description = "List of CIDR blocks allowed to SSH into Jenkins"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]  # WARNING: Open to all IPs. Restrict in production.
 }
