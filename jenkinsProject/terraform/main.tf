@@ -29,15 +29,23 @@ resource "aws_instance" "jenkins" {
 
   associate_public_ip_address = true
 
-  tags = {
-    Name = "jenkins-server"
+  root_block_device {
+    volume_type           = "gp3"
+    volume_size           = 20
+    delete_on_termination = true
+    encrypted             = true
   }
-}
 
-output "jenkins_public_ip" {
-  value = aws_instance.jenkins.public_ip
-}
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+    instance_metadata_tags      = "enabled"
+  }
 
-output "jenkins_private_ip" {
-  value = aws_instance.jenkins.private_ip
+  tags = {
+    Name      = "jenkins-server"
+    ManagedBy = "Terraform"
+    Project   = "JenkinsProject"
+  }
 }
