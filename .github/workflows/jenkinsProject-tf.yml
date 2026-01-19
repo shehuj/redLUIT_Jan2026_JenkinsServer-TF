@@ -1,0 +1,43 @@
+name: "Terraform Apply"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: "1.5.0"
+
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Terraform Plan
+      run: terraform plan -out tfplan
+
+    - name: Terraform Apply
+      run: terraform apply -auto-approve tfplan
+
+    - name: Extract Outputs
+      run: |
+        echo "JENKINS_PUBLIC_IP=$(terraform output -raw jenkins_public_ip)" >> $GITHUB_ENV
+        echo "JENKINS_PRIVATE_IP=$(terraform output -raw jenkins_private_ip)" >> $GITHUB_ENV
+
+    - name: Print IPs
+      run: |
+        echo "Public IP: ${{ env.JENKINS_PUBLIC_IP }}"
+        echo "Private IP: ${{ env.JENKINS_PRIVATE_IP }}"

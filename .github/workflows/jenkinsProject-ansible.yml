@@ -1,0 +1,48 @@
+name: "Configure Jenkins via Ansible"
+
+on:
+  workflow_dispatch:
+    inputs:
+      public-ip:
+        description: "Public IP output from terraform.yml"
+        required: true
+        type: string
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    env:
+      ANSIBLE_HOST_KEY_CHECKING: "False"
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set Public IP
+      run: echo "JENKINS_PUBLIC_IP=${{ github.event.inputs.public-ip }}" >> $GITHUB_ENV
+
+    - name: Wait for SSH to be available
+      run: |
+        for i in {1..20}; do
+          if nc -zv ${{ env.JENKINS_PUBLIC_IP }} 22; then
+            echo "SSH reachable"
+            break
+          fi
+          echo "Waiting for SSH..."
+          sleep 15
+        done
+
+    - name: Configure SSH Key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+
+    - name: Create Ansible inventory
+      run: |
+        echo "[jenkins]" > inventory.ini
+        echo "${{ env.JENKINS_PUBLIC_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa" >> inventory.ini
+
+    - name: Run Ansible Playbook
+      run: |
+        ansible-playbook -i inventory.ini site.yml
