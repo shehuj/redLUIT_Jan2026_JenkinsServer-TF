@@ -2,6 +2,7 @@ name: Configure Jenkins via Ansible jenkinsProject
 
 on:
   workflow_dispatch:
+
   push:
     branches:
       - main
