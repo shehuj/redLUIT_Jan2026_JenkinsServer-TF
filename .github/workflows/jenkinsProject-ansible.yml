@@ -1,4 +1,4 @@
-name: "Configure Jenkins via Ansible"
+name: "Configure JenkinsProject via Ansible"
 
 on:
   workflow_dispatch:
