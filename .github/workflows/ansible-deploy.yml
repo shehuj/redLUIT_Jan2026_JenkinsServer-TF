@@ -1,12 +1,7 @@
 name: Ansible Configuration
 
 on:
-  pull_request:
-    branches: [ "main", "dev" ]
-    paths:
-      - 'ansible/**'
-      - 'infra/terraform/**'
-      - '.github/workflows/ansible-deploy.yml'
+
   push:
     branches: [ "main" ]
     paths:
