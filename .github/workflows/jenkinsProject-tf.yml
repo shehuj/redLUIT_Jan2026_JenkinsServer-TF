@@ -1,10 +1,10 @@
-name: "Terraform Apply"
+name: Terraform Apply - jenkinsProject
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
+      - dev
 
 jobs:
   terraform:
@@ -22,22 +22,28 @@ jobs:
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: "1.5.0"
+        terraform_wrapper: false
 
-    - name: Terraform Init
-      run: terraform init
-
-    - name: Terraform Plan
-      run: terraform plan -out tfplan
-
-    - name: Terraform Apply
-      run: terraform apply -auto-approve tfplan
-
-    - name: Extract Outputs
+    - name: Terraform Init & Apply
       run: |
-        echo "JENKINS_PUBLIC_IP=$(terraform output -raw jenkins_public_ip)" >> $GITHUB_ENV
-        echo "JENKINS_PRIVATE_IP=$(terraform output -raw jenkins_private_ip)" >> $GITHUB_ENV
+        cd ./jenkinsProject/terraform
+        terraform init
+        terraform plan -out=tfplan
+        terraform apply -auto-approve tfplan
+
+    - name: Export Terraform Outputs
+      run: |
+        cd ./jenkinsProject/terraform
+
+        # Capture outputs without debug noise
+        JENKINS_PUBLIC_IP=$(terraform output -raw jenkins_public_ip 2>/dev/null || echo "")
+        JENKINS_PRIVATE_IP=$(terraform output -raw jenkins_private_ip 2>/dev/null || echo "")
+
+        # Write them in valid KEY=value format
+        echo "JENKINS_PUBLIC_IP=${JENKINS_PUBLIC_IP}" >> $GITHUB_ENV
+        echo "JENKINS_PRIVATE_IP=${JENKINS_PRIVATE_IP}" >> $GITHUB_ENV
 
     - name: Print IPs
       run: |
-        echo "Public IP: ${{ env.JENKINS_PUBLIC_IP }}"
-        echo "Private IP: ${{ env.JENKINS_PRIVATE_IP }}"
+        echo "Public IP = ${{ env.JENKINS_PUBLIC_IP }}"
+        echo "Private IP = ${{ env.JENKINS_PRIVATE_IP }}"
