@@ -52,11 +52,16 @@ jobs:
       - name: Set Terraform Workspace
         id: workspace
         run: |
-          if [[ "${GITHUB_REF##*/}" == "main" ]]; then
-            echo "workspace=prod" >> $GITHUB_OUTPUT
-          else
-            echo "workspace=dev" >> $GITHUB_OUTPUT
-          fi
+          # Using dev workspace for all deployments
+          # To enable prod workspace: uncomment the if/else logic below
+          echo "workspace=dev" >> $GITHUB_OUTPUT
+
+          # Future: Enable prod workspace for main branch
+          # if [[ "${GITHUB_REF##*/}" == "main" ]]; then
+          #   echo "workspace=prod" >> $GITHUB_OUTPUT
+          # else
+          #   echo "workspace=dev" >> $GITHUB_OUTPUT
+          # fi
 
       # 🧾 Initialize Terraform with Remote Backend + Workspace
       - name: Terraform Init
