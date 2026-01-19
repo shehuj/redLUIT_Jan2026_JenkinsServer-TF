@@ -1,4 +1,4 @@
-name: "Terraform Apply - jenkinsProject"
+name: Terraform Apply - jenkinsProject
 
 on:
   workflow_dispatch:
@@ -9,34 +9,40 @@ on:
 jobs:
   terraform:
     runs-on: ubuntu-latest
-    # Removed invalid property 'work-dir'
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_version: "1.5.0"
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.5.0"
 
-    - name: Terraform Init
-      run: |
-        terraform init
-        terraform plan -out tfplan
-        terraform apply -auto-approve tfplan
-      working-directory: ./jenkinsProject/terraform
-    - name: Terraform Apply
-      run: |
-        echo "JENKINS_PUBLIC_IP=$(terraform output -raw jenkins_public_ip)" >> $GITHUB_ENV
-        echo "JENKINS_PRIVATE_IP=$(terraform output -raw jenkins_private_ip)" >> $GITHUB_ENV
-      working-directory: ./jenkinsProject/terraform
+      - name: Terraform Init & Apply
+        run: |
+          cd ./jenkinsProject/terraform
+          terraform init
+          terraform plan -out=tfplan
+          terraform apply -auto-approve tfplan
 
-    - name: Print IPs
-      run: |
-        echo "Public IP: ${{ env.JENKINS_PUBLIC_IP }}"
-        echo "Private IP: ${{ env.JENKINS_PRIVATE_IP }}"
+      - name: Export Terraform Outputs
+        run: |
+          cd ./jenkinsProject/terraform
+
+          # Capture outputs into clean variables
+          JENKINS_PUBLIC_IP=$(terraform output -raw jenkins_public_ip 2>/dev/null || echo "")
+          JENKINS_PRIVATE_IP=$(terraform output -raw jenkins_private_ip 2>/dev/null || echo "")
+
+          # Write them into GITHUB_ENV in KEY=value format
+          echo "JENKINS_PUBLIC_IP=${JENKINS_PUBLIC_IP}" >> $GITHUB_ENV
+          echo "JENKINS_PRIVATE_IP=${JENKINS_PRIVATE_IP}" >> $GITHUB_ENV
+
+      - name: Print IPs
+        run: |
+          echo "Public IP: ${{ env.JENKINS_PUBLIC_IP }}"
+          echo "Private IP: ${{ env.JENKINS_PRIVATE_IP }}"
