@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       workspace:
-        description: 'Workspace to destroy (dev/prod)'
+        description: 'Workspace to destroy'
         required: true
         type: choice
         options:
           - dev
-          - prod
+        default: dev
       confirmation:
         description: 'Type "DESTROY" to confirm resource deletion'
         required: true
@@ -186,8 +186,6 @@ jobs:
     name: 'Destroy Infrastructure'
     runs-on: ubuntu-latest
     needs: [validate-input, pre-destroy-inventory]
-    # Add environment protection for production
-    environment: ${{ github.event.inputs.workspace == 'prod' && 'production' || 'development' }}
 
     steps:
       - name: Checkout repository
@@ -442,6 +440,28 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Attempting to clean up any resources Terraform couldn't delete..." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Clean up orphaned EC2 instances
+          echo "### EC2 Instances" >> $GITHUB_STEP_SUMMARY
+          INSTANCE_COUNT=0
+          aws ec2 describe-instances \
+            --filters "Name=tag:ManagedBy,Values=Terraform" "Name=instance-state-name,Values=running,stopped,stopping,pending" \
+            --query 'Reservations[*].Instances[*].InstanceId' \
+            --output text | while read -r instance_id; do
+              if [ ! -z "$instance_id" ]; then
+                echo "Terminating instance: $instance_id" >> $GITHUB_STEP_SUMMARY
+                aws ec2 terminate-instances --instance-ids $instance_id 2>&1 || echo "Failed to terminate $instance_id" >> $GITHUB_STEP_SUMMARY
+                INSTANCE_COUNT=$((INSTANCE_COUNT + 1))
+              fi
+          done || true
+          echo "Terminated $INSTANCE_COUNT instances" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Wait for instances to terminate
+          if [ $INSTANCE_COUNT -gt 0 ]; then
+            echo "Waiting 30 seconds for instances to terminate..." >> $GITHUB_STEP_SUMMARY
+            sleep 30
+          fi
 
           # Clean up orphaned network interfaces
           echo "### Network Interfaces" >> $GITHUB_STEP_SUMMARY
