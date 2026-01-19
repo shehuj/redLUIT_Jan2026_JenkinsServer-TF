@@ -48,7 +48,7 @@
 
     - name: Wait until Jenkins is accessible
       wait_for:
-        host: "{{ inventory_hostname }}"
+        host: localhost
         port: "{{ jenkins_port }}"
         timeout: 120
 
