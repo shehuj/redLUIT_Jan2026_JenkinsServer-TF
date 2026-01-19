@@ -129,7 +129,7 @@ jobs:
         id: get_password
         run: |
           PASSWORD=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/key.pem ubuntu@${{ env.JENKINS_PUBLIC_IP }} \
-            'sudo cat /var/lib/jenkins/secrets/initialAdminPassword' 2>/dev/null || echo "N/A")
+            'sudo cat /var/lib/jenkins/secrets/initialAdminPassword')
 
           # Display password in workflow logs
           echo "========================================"
