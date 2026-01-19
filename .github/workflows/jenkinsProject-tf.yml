@@ -34,15 +34,15 @@ jobs:
         run: |
           cd ./jenkinsProject/terraform
 
-          # Capture outputs into clean variables
+          # Capture outputs cleanly
           JENKINS_PUBLIC_IP=$(terraform output -raw jenkins_public_ip 2>/dev/null || echo "")
           JENKINS_PRIVATE_IP=$(terraform output -raw jenkins_private_ip 2>/dev/null || echo "")
 
-          # Write them into GITHUB_ENV in KEY=value format
+          # Write them in KEY=value format
           echo "JENKINS_PUBLIC_IP=${JENKINS_PUBLIC_IP}" >> $GITHUB_ENV
           echo "JENKINS_PRIVATE_IP=${JENKINS_PRIVATE_IP}" >> $GITHUB_ENV
 
       - name: Print IPs
         run: |
-          echo "Public IP: ${{ env.JENKINS_PUBLIC_IP }}"
-          echo "Private IP: ${{ env.JENKINS_PRIVATE_IP }}"
+          echo "Public IP = ${{ env.JENKINS_PUBLIC_IP }}"
+          echo "Private IP = ${{ env.JENKINS_PRIVATE_IP }}"
