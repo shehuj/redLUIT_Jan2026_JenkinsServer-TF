@@ -123,7 +123,7 @@ jobs:
         run: |
           echo "🚀 Configuring Jenkins with Ansible..."
           cd jenkinsProject
-          ansible-playbook -i ansible/inventory.ini site.yml -v
+          ansible-playbook -i ansible/inventory.ini ansible/playbooks/site.yml
 
       - name: Retrieve Jenkins Initial Password
         id: get_password
