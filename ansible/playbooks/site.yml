@@ -10,7 +10,7 @@
         mode: "0755"
 
     - name: Run Jenkins install script
-      shell: bash /tmp/jenkins.sh
+      shell: bash /tmp/jenkins.sh 2>&1 | tee /var/log/jenkins-install.log
       args:
         executable: /bin/bash
       register: jenkins_install
@@ -18,5 +18,10 @@
 
     - name: Display Jenkins installation output
       debug:
-        var: jenkins_install.stdout_lines
-      when: jenkins_install is defined
+        msg: "{{ jenkins_install.stdout_lines[-20:] }}"
+      when: jenkins_install is defined and jenkins_install.stdout_lines is defined
+
+    - name: Display Jenkins installation errors (if any)
+      debug:
+        var: jenkins_install.stderr_lines
+      when: jenkins_install is defined and jenkins_install.stderr_lines is defined and jenkins_install.stderr_lines | length > 0
