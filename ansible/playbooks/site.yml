@@ -5,7 +5,7 @@
   tasks:
     - name: Copy install script
       copy:
-        src: ../../jenkinsProject/jenkins.sh
+        src: ../../jenkinsProject/install-jenkins.sh
         dest: /tmp/jenkins.sh
         mode: "0755"
 
