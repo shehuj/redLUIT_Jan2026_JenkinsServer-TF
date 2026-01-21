@@ -27,13 +27,82 @@ jobs:
         terraform_version: "1.5.0"
         terraform_wrapper: false
 
+    - name: Check and Fix Terraform State
+      continue-on-error: true
+      run: |
+        cd ./jenkinsProject/terraform
+
+        echo "🔍 Checking Terraform state integrity..."
+
+        # Try to initialize and check for state issues
+        if ! terraform init \
+          -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
+          -backend-config="region=${{ secrets.AWS_REGION }}" \
+          -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}" 2>&1 | tee init_output.txt; then
+
+          # Check if it's a checksum mismatch error
+          if grep -q "checksum" init_output.txt || grep -q "state data in S3 does not have the expected content" init_output.txt; then
+            echo "⚠️ State checksum mismatch detected"
+            echo "🧹 Cleaning up corrupted state..."
+
+            # Get backend config from terraform files
+            STATE_KEY="jenkins-states/default/infra.tfstate"
+            BUCKET="${{ secrets.TF_BACKEND_BUCKET }}"
+            TABLE="${{ secrets.TF_DYNAMODB_TABLE }}"
+            LOCK_ID="${BUCKET}/${STATE_KEY}-md5"
+
+            # Delete corrupted state file from S3
+            echo "Removing state file from S3..."
+            aws s3 rm "s3://${BUCKET}/${STATE_KEY}" 2>/dev/null || echo "State file not found in S3"
+
+            # Clear DynamoDB digest entry
+            echo "Clearing DynamoDB lock entry..."
+            aws dynamodb delete-item \
+              --table-name "${TABLE}" \
+              --key "{\"LockID\": {\"S\": \"${LOCK_ID}\"}}" \
+              --region "${{ secrets.AWS_REGION }}" 2>/dev/null || echo "Lock entry not found"
+
+            # Also try to clear any other locks
+            aws dynamodb delete-item \
+              --table-name "${TABLE}" \
+              --key "{\"LockID\": {\"S\": \"${BUCKET}/${STATE_KEY}\"}}" \
+              --region "${{ secrets.AWS_REGION }}" 2>/dev/null || true
+
+            echo "✅ State cleanup complete"
+            echo "state_was_cleaned=true" >> $GITHUB_ENV
+          else
+            echo "❌ Terraform init failed for a different reason"
+            cat init_output.txt
+            exit 1
+          fi
+        else
+          echo "✅ State is healthy"
+          echo "state_was_cleaned=false" >> $GITHUB_ENV
+        fi
+
+        rm -f init_output.txt
+
     - name: Terraform Init
       run: |
         cd ./jenkinsProject/terraform
-        terraform init -reconfigure \
+        terraform init \
           -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
           -backend-config="region=${{ secrets.AWS_REGION }}" \
           -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}"
+
+    - name: State Cleanup Notification
+      if: env.state_was_cleaned == 'true'
+      run: |
+        echo "## ⚠️ State Cleanup Performed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "A corrupted Terraform state was detected and automatically cleaned." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Actions taken:**" >> $GITHUB_STEP_SUMMARY
+        echo "- Removed corrupted state file from S3" >> $GITHUB_STEP_SUMMARY
+        echo "- Cleared DynamoDB checksum entries" >> $GITHUB_STEP_SUMMARY
+        echo "- Re-initialized Terraform with clean state" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Note:** Any existing infrastructure will need to be imported or recreated." >> $GITHUB_STEP_SUMMARY
 
     - name: Terraform Validate
       run: |
