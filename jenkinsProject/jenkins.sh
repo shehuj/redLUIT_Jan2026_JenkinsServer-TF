@@ -1,8 +1,5 @@
 #!/bin/bash
-set -euxo pipefail
-
-# Log output to file (simplified for Ansible compatibility)
-exec > >(tee -a /var/log/jenkins-install.log) 2>&1
+set -eux
 
 echo "=========================================="
 echo "Jenkins Installation Started: $(date)"
