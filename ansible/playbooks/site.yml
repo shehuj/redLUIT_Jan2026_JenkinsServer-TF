@@ -1,27 +1,71 @@
 ---
-- hosts: jenkins
+- name: Install and prepare Jenkins for use
+  hosts: jenkins_servers
   become: true
+  vars:
+    jenkins_repo_url: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
+    jenkins_key_url: "https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key"
 
   tasks:
-    - name: Copy install script
-      copy:
-        src: ../../jenkinsProject/install-jenkins.sh
-        dest: /tmp/install-jenkins.sh
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install dependencies
+      ansible.builtin.apt:
+        name:
+          - wget
+          - curl
+          - gnupg
+        state: present
+
+    - name: Install Java (required for Jenkins)
+      ansible.builtin.apt:
+        name: openjdk-21-jre
+        state: present
+
+    - name: Create keyrings directory
+      ansible.builtin.file:
+        path: /usr/share/keyrings
+        state: directory
         mode: "0755"
 
-    - name: Run Jenkins install script
-      shell: bash /tmp/install-jenkins.sh 2>&1 | tee /var/log/jenkins-install.log
-      args:
-        executable: /bin/bash
-      register: jenkins_install
-      failed_when: jenkins_install.rc != 0
+    - name: Download Jenkins GPG key
+      ansible.builtin.get_url:
+        url: "{{ jenkins_key_url }}"
+        dest: /usr/share/keyrings/jenkins-keyring.asc
+        mode: "0644"
 
-    - name: Display Jenkins installation output
-      debug:
-        msg: "{{ jenkins_install.stdout_lines[-20:] }}"
-      when: jenkins_install is defined and jenkins_install.stdout_lines is defined
+    - name: Add Jenkins apt repository
+      ansible.builtin.apt_repository:
+        repo: "{{ jenkins_repo_url }}"
+        filename: jenkins
+        state: present
+        update_cache: yes
 
-    - name: Display Jenkins installation errors (if any)
-      debug:
-        var: jenkins_install.stderr_lines
-      when: jenkins_install is defined and jenkins_install.stderr_lines is defined and jenkins_install.stderr_lines | length > 0
+    - name: Install Jenkins package
+      ansible.builtin.apt:
+        name: jenkins
+        state: present
+
+    - name: Ensure Jenkins service is started and enabled
+      ansible.builtin.systemd:
+        name: jenkins
+        state: started
+        enabled: yes
+
+    - name: Allow Jenkins port through UFW
+      ansible.builtin.ufw:
+        rule: allow
+        port: 8080
+        proto: tcp
+
+    - name: Print Jenkins initial admin password
+      ansible.builtin.shell: cat /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_initial_password
+      changed_when: false
+
+    - name: Show Jenkins admin password
+      ansible.builtin.debug:
+        msg: "Jenkins initial admin password: {{ jenkins_initial_password.stdout }}"
