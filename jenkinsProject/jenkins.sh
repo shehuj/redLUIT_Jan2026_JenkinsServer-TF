@@ -9,17 +9,24 @@ echo "=========================================="
 apt-get update -y
 
 # Install required utilities
-apt-get install -y wget gnupg2 software-properties-common
+apt-get install -y curl wget gnupg2 software-properties-common
 
 # Install OpenJDK 17 (Jenkins prerequisite)
 apt-get install -y openjdk-17-jdk
 java -version
 
-# Add Jenkins repository key and source (modern method)
-wget -q -O /usr/share/keyrings/jenkins-keyring.asc https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
-echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" > /etc/apt/sources.list.d/jenkins.list
+# Add Jenkins repository key using the official method
+# Download and import the Jenkins GPG key
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee \
+  /usr/share/keyrings/jenkins-keyring.asc > /dev/null
 
-# Update and install Jenkins
+# Verify the key was imported
+gpg --no-default-keyring --keyring /usr/share/keyrings/jenkins-keyring.asc --list-keys
+
+# Add Jenkins repository with the keyring
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" | tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+# Update package list and install Jenkins
 apt-get update -y
 apt-get install -y jenkins
 
@@ -37,7 +44,7 @@ ufw reload
 
 # Wait for Jenkins to initialize
 echo "Waiting for Jenkins to start..."
-sleep 45
+sleep 30
 
 # Verify Jenkins is running
 if systemctl is-active --quiet jenkins; then
@@ -47,11 +54,26 @@ else
     systemctl status jenkins --no-pager || true
 fi
 
+# Wait for Jenkins to fully initialize and create the password file
+echo "Waiting for Jenkins to complete initialization..."
+MAX_WAIT=120
+COUNTER=0
+while [ ! -f /var/lib/jenkins/secrets/initialAdminPassword ] && [ $COUNTER -lt $MAX_WAIT ]; do
+    sleep 5
+    COUNTER=$((COUNTER + 5))
+    echo "Waiting for password file... ($COUNTER seconds)"
+done
+
 # Print the initial admin password to logs
 echo ""
 echo "=========================================="
-echo "Jenkins initial admin password:"
-cat /var/lib/jenkins/secrets/initialAdminPassword || echo "Password file not found yet"
+if [ -f /var/lib/jenkins/secrets/initialAdminPassword ]; then
+    echo "Jenkins initial admin password:"
+    cat /var/lib/jenkins/secrets/initialAdminPassword
+else
+    echo "⚠️ Password file not created yet. Jenkins may still be initializing."
+    echo "You can retrieve it later with: sudo cat /var/lib/jenkins/secrets/initialAdminPassword"
+fi
 echo "=========================================="
 echo ""
 PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || echo "IP unavailable")
