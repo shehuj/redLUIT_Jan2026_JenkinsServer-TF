@@ -106,24 +106,24 @@ jobs:
 
       - name: Create Ansible inventory
         run: |
-          mkdir -p jenkinsProject/ansible
-          echo "[jenkins]" > jenkinsProject/ansible/inventory.ini
-          echo "jenkins_server ansible_host=${{ env.JENKINS_PUBLIC_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/key.pem" >> jenkinsProject/ansible/inventory.ini
-          echo "" >> jenkinsProject/ansible/inventory.ini
-          echo "[jenkins:vars]" >> jenkinsProject/ansible/inventory.ini
-          echo "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> jenkinsProject/ansible/inventory.ini
-          cat jenkinsProject/ansible/inventory.ini
+          mkdir -p ansible/playbooks
+          echo "[jenkins]" > ansible/playbooks/inventory.ini
+          echo "jenkins_server ansible_host=${{ env.JENKINS_PUBLIC_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/key.pem" >> ansible/playbooks/inventory.ini
+          echo "" >> ansible/playbooks/inventory.ini
+          echo "[jenkins:vars]" >> ansible/playbooks/inventory.ini
+          echo "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> ansible/playbooks/inventory.ini
+          echo "Generated inventory file:"
+          cat ansible/playbooks/inventory.ini
 
       - name: Test Ansible Connectivity
         run: |
           echo "🔍 Testing Ansible connectivity..."
-          ansible -i jenkinsProject/ansible/inventory.ini jenkins -m ping -v
+          ansible -i ansible/playbooks/inventory.ini jenkins -m ping -v
 
       - name: Run Ansible Playbook
         run: |
           echo "🚀 Configuring Jenkins with Ansible..."
-          cd jenkinsProject
-          ansible-playbook -i ansible/inventory.ini ansible/playbooks/site.yml
+          ansible-playbook -i ansible/playbooks/inventory.ini ansible/playbooks/site.yml
 
       - name: Retrieve Jenkins Initial Password
         id: get_password
