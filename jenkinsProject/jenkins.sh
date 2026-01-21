@@ -1,8 +1,12 @@
 #!/bin/bash
 set -euxo pipefail
 
-# Log to both cloud-init-output.log and console (optional)
-exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+# Log output to file (simplified for Ansible compatibility)
+exec > >(tee -a /var/log/jenkins-install.log) 2>&1
+
+echo "=========================================="
+echo "Jenkins Installation Started: $(date)"
+echo "=========================================="
 
 # Update package index
 apt-get update -y
@@ -56,3 +60,9 @@ echo ""
 PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || echo "IP unavailable")
 echo "Jenkins installation completed!"
 echo "Access at: http://${PUBLIC_IP}:8080"
+echo ""
+echo "=========================================="
+echo "Jenkins Installation Completed: $(date)"
+echo "=========================================="
+
+exit 0
