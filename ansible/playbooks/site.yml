@@ -5,12 +5,18 @@
   tasks:
     - name: Copy install script
       copy:
-        src: ../../jenkinsProject/install-jenkins.sh
+        src: ../../jenkinsProject/jenkins.sh
         dest: /tmp/jenkins.sh
         mode: "0755"
 
     - name: Run Jenkins install script
-      shell: |
-        /tmp/jenkins.sh
+      shell: bash /tmp/jenkins.sh
       args:
         executable: /bin/bash
+      register: jenkins_install
+      failed_when: jenkins_install.rc != 0
+
+    - name: Display Jenkins installation output
+      debug:
+        var: jenkins_install.stdout_lines
+      when: jenkins_install is defined
