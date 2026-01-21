@@ -128,8 +128,33 @@ jobs:
       - name: Retrieve Jenkins Initial Password
         id: get_password
         run: |
-          PASSWORD=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/key.pem ubuntu@${{ env.JENKINS_PUBLIC_IP }} \
-            'sudo cat /var/lib/jenkins/secrets/initialAdminPassword')
+          echo "Waiting for Jenkins password file..."
+          MAX_ATTEMPTS=12
+          ATTEMPT=0
+          PASSWORD=""
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            PASSWORD=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/key.pem ubuntu@${{ env.JENKINS_PUBLIC_IP }} \
+              'sudo cat /var/lib/jenkins/secrets/initialAdminPassword 2>/dev/null' || echo "")
+
+            if [ -n "$PASSWORD" ]; then
+              echo "✅ Password retrieved successfully!"
+              break
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+              echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Password file not ready yet, waiting 10 seconds..."
+              sleep 10
+            fi
+          done
+
+          if [ -z "$PASSWORD" ]; then
+            echo "⚠️ Could not retrieve password after $MAX_ATTEMPTS attempts"
+            echo "Jenkins may still be initializing. Check manually with:"
+            echo "ssh ubuntu@${{ env.JENKINS_PUBLIC_IP }} 'sudo cat /var/lib/jenkins/secrets/initialAdminPassword'"
+            exit 1
+          fi
 
           # Display password in workflow logs
           echo "========================================"
