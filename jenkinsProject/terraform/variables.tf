@@ -19,7 +19,7 @@ variable "key_pair" {
 variable "ssh_allowed_cidrs" {
   description = "List of CIDR blocks allowed to SSH into Jenkins"
   type        = list(string)
-  default     = ["0.0.0.0/0"]  # WARNING: Open to all IPs. Restrict in production.
+  default     = ["0.0.0.0/0"] # WARNING: Open to all IPs. Restrict in production.
 }
 
 variable "artifacts_bucket_name" {

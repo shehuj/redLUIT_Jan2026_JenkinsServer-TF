@@ -5,7 +5,7 @@ terraform {
     # For local use: terraform init -backend-config="key=terraform-states/dev/infra.tfstate"
 
     bucket         = "ec2-shutdown-lambda-bucket"
-    key            = "jenkins-states/default/infra.tfstate"  # Overridden by -backend-config
+    key            = "jenkins-states/default/infra.tfstate" # Overridden by -backend-config
     region         = "us-east-1"
     dynamodb_table = "dyning_table"
     encrypt        = true

@@ -1,0 +1,121 @@
+---
+- name: Install and Configure Jenkins
+  hosts: jenkins
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Update apt package index
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - wget
+          - gnupg2
+          - curl
+          - fontconfig
+        state: present
+
+    - name: Install OpenJDK 21
+      apt:
+        name: openjdk-21-jre
+        state: present
+
+    - name: Verify Java installation
+      command: java -version
+      register: java_version
+      changed_when: false
+
+    - name: Display Java version
+      debug:
+        var: java_version.stderr_lines
+
+    - name: Create keyrings directory
+      file:
+        path: /usr/share/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add Jenkins repository signing key
+      shell: |
+        curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key \
+          | tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+      args:
+        creates: /usr/share/keyrings/jenkins-keyring.asc
+
+    - name: Add Jenkins repository
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
+        state: present
+        filename: jenkins
+
+    - name: Update apt cache after adding Jenkins repo
+      apt:
+        update_cache: yes
+
+    - name: Install Jenkins
+      apt:
+        name: jenkins
+        state: present
+
+    - name: Start and enable Jenkins service
+      systemd:
+        name: jenkins
+        state: started
+        enabled: yes
+
+    - name: Check if UFW is active
+      command: ufw status
+      register: ufw_status
+      changed_when: false
+      failed_when: false
+
+    - name: Allow port 8080 through UFW if active
+      ufw:
+        rule: allow
+        port: '8080'
+        proto: tcp
+      when: "'Status: active' in ufw_status.stdout"
+
+    - name: Wait for Jenkins to initialize
+      wait_for:
+        port: 8080
+        host: localhost
+        delay: 10
+        timeout: 300
+
+    - name: Check Jenkins service status
+      systemd:
+        name: jenkins
+      register: jenkins_status
+
+    - name: Display Jenkins service status
+      debug:
+        msg: "Jenkins service is {{ jenkins_status.status.ActiveState }}"
+
+    - name: Check if initial admin password file exists
+      stat:
+        path: /var/lib/jenkins/secrets/initialAdminPassword
+      register: password_file
+
+    - name: Read initial admin password
+      slurp:
+        src: /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_password
+      when: password_file.stat.exists
+
+    - name: Display initial admin password
+      debug:
+        msg: "Jenkins initial admin password: {{ jenkins_password['content'] | b64decode | trim }}"
+      when: password_file.stat.exists
+
+    - name: Display completion message
+      debug:
+        msg: |
+          ==========================================
+          Jenkins installation completed!
+          Access it at http://{{ ansible_host }}:8080
+          ==========================================
