@@ -1,24 +1,21 @@
-name: Configure Jenkins via Ansible jenkinsProject
+name: Configure Jenkins via Ansible
 
 on:
   workflow_dispatch:
-
   push:
-    branches:
-      - main
+    branches: ["main"]
+    # Only run when relevant files change
     paths:
-      - 'jenkinsProject/**'
-      - '.github/workflows/jenkinsProject-ansible.yml'
+      - "jenkinsProject/**"
+      - ".github/workflows/jenkinsProject-ansible.yml"
+
+concurrency:
+  group: "configure-jenkins-main"
+  cancel-in-progress: true
 
 jobs:
   configure:
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    env:
-      ANSIBLE_HOST_KEY_CHECKING: "False"
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
     steps:
       - name: Checkout repository
@@ -27,201 +24,107 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
+          aws-region: ${{ secrets.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Setup Terraform
+      - name: Install Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.5.0"
           terraform_wrapper: false
 
-      - name: Get Jenkins IP from Terraform
-        id: get_ip
+      - name: Init & Output Jenkins IP via Terraform
+        id: terraform
         run: |
-          cd ./jenkinsProject/terraform
+          cd jenkinsProject/terraform
+
           terraform init \
             -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
             -backend-config="region=${{ secrets.AWS_REGION }}" \
             -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}"
 
-          JENKINS_PUBLIC_IP=$(terraform output -raw jenkins_public_ip 2>/dev/null || echo "")
-          JENKINS_PRIVATE_IP=$(terraform output -raw jenkins_private_ip 2>/dev/null || echo "")
+          JIP=$(terraform output -raw jenkins_public_ip)
+          JPRIV=$(terraform output -raw jenkins_private_ip)
 
-          if [[ -z "$JENKINS_PUBLIC_IP" ]] || [[ ! "$JENKINS_PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "❌ Error: Could not retrieve valid Jenkins public IP from Terraform"
-            echo "Got: $JENKINS_PUBLIC_IP"
-            exit 1
-          fi
+          echo "jenkins_public_ip=$JIP" >> $GITHUB_OUTPUT
+          echo "jenkins_private_ip=$JPRIV" >> $GITHUB_OUTPUT
 
-          echo "jenkins_public_ip=${JENKINS_PUBLIC_IP}" >> $GITHUB_OUTPUT
-          echo "jenkins_private_ip=${JENKINS_PRIVATE_IP}" >> $GITHUB_OUTPUT
-          echo "📍 Jenkins Public IP: ${JENKINS_PUBLIC_IP}"
-          echo "🔒 Jenkins Private IP: ${JENKINS_PRIVATE_IP}"
+      - name: Save Jenkins IP to ENV
+        run: echo "JENKINS_PUBLIC_IP=${{ steps.terraform.outputs.jenkins_public_ip }}" >> $GITHUB_ENV
 
-      - name: Set Public IP
-        run: |
-          echo "JENKINS_PUBLIC_IP=${{ steps.get_ip.outputs.jenkins_public_ip }}" >> $GITHUB_ENV
-
-      - name: Set up Python
+      - name: Setup Python & Ansible
         uses: actions/setup-python@v4
         with:
           python-version: "3.14"
 
-      - name: Install Ansible
+      - name: Install Ansible + AWS libs
         run: |
           python3 -m pip install --upgrade pip
           pip3 install ansible boto3 botocore
-      - name: Configure SSH Key
-        env:
-            SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-            mkdir -p ~/.ssh
-            printf "%s\n" "$SSH_KEY" > ~/.ssh/key.pem
-            chmod 600 ~/.ssh/key.pem
-        
-      - name: Add key to SSH agent
-        run: |
-            eval "$(ssh-agent -s)"
-            ssh-add ~/.ssh/key.pem
-        
-      - name: Setup SSH config
-        run: |
-            echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
-            chmod 600 ~/.ssh/config
-      - name: Wait for EC2 SSH Availability
-        run: |
-          echo "⏳ Waiting for EC2 instance to accept SSH connections..."
-          MAX_ATTEMPTS=30
-          ATTEMPT=0
 
-          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/key.pem ubuntu@${{ env.JENKINS_PUBLIC_IP }} "echo 'SSH OK'" 2>/dev/null; then
-              echo "✅ EC2 instance is accessible via SSH"
+      - name: Configure SSH Agent
+        uses: weaveworks/webfactory-ssh-agent@v0.5.4
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add EC2 Host to Known Hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.JENKINS_PUBLIC_IP }} >> ~/.ssh/known_hosts
+
+      - name: Wait for SSH Availability
+        run: |
+          for i in $(seq 1 30); do
+            if ssh -o ConnectTimeout=5 ubuntu@${{ env.JENKINS_PUBLIC_IP }} "echo ok"; then
+              echo "Connected on attempt $i"
               break
             fi
-
-            ATTEMPT=$((ATTEMPT + 1))
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Waiting 10 seconds..."
             sleep 10
           done
 
-          if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
-            echo "❌ EC2 instance did not become accessible"
-            exit 1
-          fi
-
-      - name: Create Ansible inventory
+      - name: Create Ansible Inventory
         run: |
-          mkdir -p ansible/playbooks
-          echo "[jenkins]" > ansible/playbooks/inventory.ini
-          echo "jenkins_server ansible_host=${{ env.JENKINS_PUBLIC_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/key.pem" >> ansible/playbooks/inventory.ini
-          echo "" >> ansible/playbooks/inventory.ini
-          echo "[jenkins:vars]" >> ansible/playbooks/inventory.ini
-          echo "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> ansible/playbooks/inventory.ini
-          echo "Generated inventory file:"
+          cat <<EOF > ansible/playbooks/inventory.ini
+          [jenkins]
+          jenkins_server ansible_host=${{ env.JENKINS_PUBLIC_IP }} ansible_user=ubuntu
+          EOF
           cat ansible/playbooks/inventory.ini
 
       - name: Test Ansible Connectivity
-        run: |
-          echo "🔍 Testing Ansible connectivity..."
-          ansible -i ansible/playbooks/inventory.ini jenkins -m ping -v
+        run: ansible -i ansible/playbooks/inventory.ini jenkins -m ping -v
 
       - name: Run Ansible Playbook
-        run: |
-          echo "🚀 Configuring Jenkins with Ansible..."
-          ansible-playbook -i ansible/playbooks/inventory.ini ansible/playbooks/site.yml
+        run: ansible-playbook -i ansible/playbooks/inventory.ini ansible/playbooks/site.yml
 
-      - name: Retrieve Jenkins Initial Password
+      - name: Retrieve Jenkins Initial Admin Password
         id: get_password
         run: |
-          echo "Waiting for Jenkins password file..."
-          MAX_ATTEMPTS=12
-          ATTEMPT=0
-          PASSWORD=""
-
-          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-            PASSWORD=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/key.pem ubuntu@${{ env.JENKINS_PUBLIC_IP }} \
-              'sudo cat /var/lib/jenkins/secrets/initialAdminPassword 2>/dev/null' || echo "")
-
-            if [ -n "$PASSWORD" ]; then
-              echo "✅ Password retrieved successfully!"
+          for i in $(seq 1 12); do
+            PASS=$(ssh ubuntu@${{ env.JENKINS_PUBLIC_IP }} \
+              "sudo cat /var/lib/jenkins/secrets/initialAdminPassword" 2>/dev/null || echo "")
+            if [[ -n "$PASS" ]]; then
+              echo "::set-output name=password::$PASS"
               break
             fi
-
-            ATTEMPT=$((ATTEMPT + 1))
-            if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
-              echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Password file not ready yet, waiting 10 seconds..."
-              sleep 10
-            fi
+            sleep 10
           done
-
-          if [ -z "$PASSWORD" ]; then
-            echo "⚠️ Could not retrieve password after $MAX_ATTEMPTS attempts"
-            echo "Jenkins may still be initializing. Check manually with:"
-            echo "ssh ubuntu@${{ env.JENKINS_PUBLIC_IP }} 'sudo cat /var/lib/jenkins/secrets/initialAdminPassword'"
-            exit 1
-          fi
-
-          # Display password in workflow logs
-          echo "========================================"
-          echo "Jenkins Initial Admin Password:"
-          echo "$PASSWORD"
-          echo "========================================"
-
-          # Save to output (GitHub may mask this)
-          echo "password=$PASSWORD" >> $GITHUB_OUTPUT
-
-          # Also save to file for artifact upload
-          mkdir -p jenkins_credentials
-          echo "$PASSWORD" > jenkins_credentials/initial_password.txt
-          echo "${{ env.JENKINS_PUBLIC_IP }}" > jenkins_credentials/jenkins_ip.txt
 
       - name: Upload Jenkins Credentials
         uses: actions/upload-artifact@v4
         with:
           name: jenkins-credentials-${{ github.sha }}
-          path: jenkins_credentials/
-          retention-days: 7
+          path: |
+            jenkins_credentials/initial_password.txt
+            jenkins_credentials/jenkins_ip.txt
+        # populate files before upload
+      - run: |
+          mkdir -p jenkins_credentials
+          echo "${{ steps.get_password.outputs.password }}" > jenkins_credentials/initial_password.txt
+          echo "${{ env.JENKINS_PUBLIC_IP }}" > jenkins_credentials/jenkins_ip.txt
 
       - name: Deployment Summary
         run: |
-          PASSWORD=$(cat jenkins_credentials/initial_password.txt)
-
-          echo "## ✅ Jenkins Configuration Complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔐 Access Information" >> $GITHUB_STEP_SUMMARY
-          echo "- **Jenkins URL**: http://${{ env.JENKINS_PUBLIC_IP }}:8080" >> $GITHUB_STEP_SUMMARY
-          echo "- **Public IP**: ${{ env.JENKINS_PUBLIC_IP }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Private IP**: ${{ steps.get_ip.outputs.jenkins_private_ip }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔑 Initial Admin Password" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "$PASSWORD" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> ⚠️ **Note**: This password is also available as a workflow artifact named \`jenkins-credentials-${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📝 Next Steps" >> $GITHUB_STEP_SUMMARY
-          echo "1. Navigate to the Jenkins URL above" >> $GITHUB_STEP_SUMMARY
-          echo "2. Use the Initial Admin Password to log in" >> $GITHUB_STEP_SUMMARY
-          echo "3. Complete the Jenkins setup wizard" >> $GITHUB_STEP_SUMMARY
-
-      - name: Print Jenkins Access Info
-        run: |
-          PASSWORD=$(cat jenkins_credentials/initial_password.txt)
-
-          echo "=============================================="
-          echo "🎉 Jenkins Configuration Successful!"
-          echo "=============================================="
-          echo ""
-          echo "Jenkins URL: http://${{ env.JENKINS_PUBLIC_IP }}:8080"
-          echo ""
-          echo "Initial Admin Password:"
-          echo "$PASSWORD"
-          echo ""
-          echo "SSH Command:"
-          echo "ssh -i ~/.ssh/key.pem ubuntu@${{ env.JENKINS_PUBLIC_IP }}"
-          echo ""
-          echo "=============================================="
+          echo "## Jenkins Setup Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- Jenkins URL: http://${{ env.JENKINS_PUBLIC_IP }}:8080" >> $GITHUB_STEP_SUMMARY
+          echo "- Initial Admin Password: ${{ steps.get_password.outputs.password }}" >> $GITHUB_STEP_SUMMARY
