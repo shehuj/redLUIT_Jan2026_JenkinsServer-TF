@@ -61,6 +61,27 @@
         name: jenkins
         state: present
 
+    - name: Check if reboot is required
+      stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Reboot system if required
+      reboot:
+        msg: "Rebooting system due to required updates"
+        connect_timeout: 5
+        reboot_timeout: 300
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+        test_command: uptime
+      when: reboot_required.stat.exists
+
+    - name: Wait for system to fully boot
+      wait_for_connection:
+        delay: 10
+        timeout: 300
+      when: reboot_required.stat.exists
+
     - name: Start and enable Jenkins service
       systemd:
         name: jenkins
@@ -80,11 +101,15 @@
         proto: tcp
       when: "'Status: active' in ufw_status.stdout"
 
+    - name: Wait for Jenkins to fully start
+      pause:
+        seconds: 30
+
     - name: Wait for Jenkins to initialize
       wait_for:
         port: 8080
         host: localhost
-        delay: 10
+        delay: 5
         timeout: 300
 
     - name: Check Jenkins service status
