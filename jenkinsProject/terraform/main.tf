@@ -77,6 +77,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "jenkins_artifacts" {
     id     = "delete-old-artifacts"
     status = "Enabled"
 
+    filter {
+      prefix = ""
+    }
+
     noncurrent_version_expiration {
       noncurrent_days = 90
     }
@@ -202,7 +206,7 @@ resource "aws_instance" "jenkins" {
   key_name               = var.key_pair
 
   # assign the existing IAM instance profile
-  iam_instance_profile   = data.aws_iam_instance_profile.existing_demo_ssm.name
+  iam_instance_profile = data.aws_iam_instance_profile.existing_demo_ssm.name
 
   associate_public_ip_address = true
 
