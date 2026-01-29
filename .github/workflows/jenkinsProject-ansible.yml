@@ -67,21 +67,29 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.x"
+          python-version: "3.14"
 
       - name: Install Ansible
         run: |
           python3 -m pip install --upgrade pip
           pip3 install ansible boto3 botocore
-
       - name: Configure SSH Key
         env:
-          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+            SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
-          mkdir -p ~/.ssh
-          printf "%s\n" "$SSH_KEY" > ~/.ssh/key.pem
-          chmod 600 ~/.ssh/key.pem
-
+            mkdir -p ~/.ssh
+            printf "%s\n" "$SSH_KEY" > ~/.ssh/key.pem
+            chmod 600 ~/.ssh/key.pem
+        
+      - name: Add key to SSH agent
+        run: |
+            eval "$(ssh-agent -s)"
+            ssh-add ~/.ssh/key.pem
+        
+      - name: Setup SSH config
+        run: |
+            echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+            chmod 600 ~/.ssh/config
       - name: Wait for EC2 SSH Availability
         run: |
           echo "⏳ Waiting for EC2 instance to accept SSH connections..."
