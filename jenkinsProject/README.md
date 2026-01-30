@@ -4,6 +4,7 @@ This directory contains Terraform and Ansible configurations for deploying a Jen
 
 ## Architecture
 
+
 ### Infrastructure Components
 
 1. **EC2 Instance**
